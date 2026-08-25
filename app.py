@@ -44,7 +44,7 @@ MIN_BALANCE_FOR_WITHDRAW = 10
 WITHDRAW_WEEK_MS = 7 * 24 * 60 * 60 * 1000
 
 # WebApp URL (для CloudFlare Pages)
-WEBAPP_URL = "https://your-project.pages.dev"  # Замените на ваш URL
+WEBAPP_URL = "https://deathgmp.telecoder.workers.dev"  # Замените на ваш URL
 
 # ==================== JSON-БАЗА ДАННЫХ ====================
 
@@ -61,7 +61,7 @@ def _init_db():
         "deposits": [],
         "withdraw_requests": [],
         "banned_users": {},
-        "admins": [{"tg_id": 123456789}],  # Замените на ваш TG ID
+        "admins": [{"tg_id": 6539341659}],  # Замените на ваш TG ID
         "crash": {
             "round_id": 0,
             "history": [],
