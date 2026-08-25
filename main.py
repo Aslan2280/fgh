@@ -1,22 +1,17 @@
 #!/usr/bin/env python3
 """
-GMPLAY — Telegram Bot на aiogram + JSON-база данных
+GMPLAY — Telegram Bot + API для BotHost
 """
 
-import asyncio
-import hashlib
-import hmac
-import json
 import os
-import threading
+import json
 import time
-import urllib.parse
-import random
-import math
+import threading
+import asyncio
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any, List
-
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
@@ -24,7 +19,7 @@ from aiogram.filters import Command
 # ==================== КОНФИГУРАЦИЯ ====================
 
 BOT_TOKEN = "8986114517:AAHoIHq-Kgk6iYEfxQLWsqN_sMNHc2pRYL8"
-WEBAPP_URL = "https://deathgmp.telecoder.workers.dev"  # Ваш CloudFlare Pages URL
+WEBAPP_URL = "https://deathgmp.telecoder.workers.dev"  # CloudFlare Pages
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "gmplay.json")
@@ -34,22 +29,20 @@ STARTING_BALANCE = 0
 DAILY_BONUS_AMOUNT = 2
 DAILY_BONUS_PERIOD_MS = 24 * 60 * 60 * 1000
 REFERRAL_CUT = 0.01
-
-CRASH_BETTING_MS = 6000
-CRASH_PAUSE_MS = 2600
-CRASH_GROWTH_RATE = 0.22
-CRASH_MAX_BETS_PER_USER = 1
 CRASH_MIN_BET = 1
-
-MIN_DEPOSIT_FOR_WITHDRAW = 100
 MIN_BALANCE_FOR_WITHDRAW = 10
+MIN_DEPOSIT_FOR_WITHDRAW = 100
 WITHDRAW_WEEK_MS = 7 * 24 * 60 * 60 * 1000
 
-# Настройки логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ==================== ИНИЦИАЛИЗАЦИЯ БОТА ====================
+# ==================== FLASK APP ====================
+
+app = Flask(__name__)
+CORS(app)
+
+# ==================== AIOGRAM BOT ====================
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -96,13 +89,13 @@ def _save_db(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def get_user(tg_id: int) -> Optional[Dict]:
+def get_user(tg_id):
     with _db_lock:
         db = _load_db()
         return db["users"].get(str(tg_id))
 
 
-def get_user_by_id(user_id: int) -> Optional[Dict]:
+def get_user_by_id(user_id):
     with _db_lock:
         db = _load_db()
         for user in db["users"].values():
@@ -111,13 +104,19 @@ def get_user_by_id(user_id: int) -> Optional[Dict]:
         return None
 
 
-def is_admin(tg_id: int) -> bool:
+def is_admin(tg_id):
     with _db_lock:
         db = _load_db()
         return any(a.get("tg_id") == tg_id for a in db.get("admins", []))
 
 
-def get_or_create_user(tg_user: Dict, start_param: str = None) -> tuple:
+def is_user_banned(tg_id):
+    with _db_lock:
+        db = _load_db()
+        return db["banned_users"].get(str(tg_id))
+
+
+def get_or_create_user(tg_user, start_param=None):
     with _db_lock:
         db = _load_db()
         now = int(time.time() * 1000)
@@ -130,7 +129,6 @@ def get_or_create_user(tg_user: Dict, start_param: str = None) -> tuple:
                 "first_name": tg_user.get("first_name", ""),
                 "last_name": tg_user.get("last_name", ""),
                 "username": tg_user.get("username", ""),
-                "photo_url": tg_user.get("photo_url", ""),
                 "updated_at": now,
             })
             _save_db(db)
@@ -155,7 +153,6 @@ def get_or_create_user(tg_user: Dict, start_param: str = None) -> tuple:
             "first_name": tg_user.get("first_name", ""),
             "last_name": tg_user.get("last_name", ""),
             "username": tg_user.get("username", ""),
-            "photo_url": tg_user.get("photo_url", ""),
             "balance": STARTING_BALANCE,
             "referred_by": referred_by,
             "last_bonus_at": None,
@@ -168,23 +165,15 @@ def get_or_create_user(tg_user: Dict, start_param: str = None) -> tuple:
         return user, True
 
 
-def is_user_banned(tg_id: int) -> Optional[Dict]:
-    with _db_lock:
-        db = _load_db()
-        return db["banned_users"].get(str(tg_id))
-
-
-def ref_code_for(tg_id: int) -> str:
+def ref_code_for(tg_id):
     return "GM" + format(int(tg_id), "x").upper()
 
 
-# ==================== ХЕНДЛЕРЫ КОМАНД ====================
+# ==================== BOT HANDLERS ====================
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    """Обработчик команды /start"""
     try:
-        # Проверяем бан
         if is_user_banned(message.from_user.id):
             await message.answer(
                 "⛔ <b>Доступ запрещён</b>\n\n"
@@ -193,33 +182,26 @@ async def cmd_start(message: types.Message):
             )
             return
 
-        # Разбираем start_param (реферальный код)
         start_param = None
         if " " in message.text:
             start_param = message.text.split(" ", 1)[1]
 
-        # Создаём или обновляем пользователя
         tg_user = {
             "id": message.from_user.id,
             "first_name": message.from_user.first_name,
             "last_name": message.from_user.last_name or "",
             "username": message.from_user.username or "",
-            "photo_url": None,
         }
 
         user, is_new = get_or_create_user(tg_user, start_param)
-
         logger.info(f"Пользователь {message.from_user.id} запустил бота. Новый: {is_new}")
 
-        # Формируем URL для WebApp с реферальным кодом
         webapp_url = WEBAPP_URL
         if user:
             webapp_url += f"?startapp={ref_code_for(user['tg_id'])}"
 
-        # Проверяем админа
         is_admin_user = is_admin(message.from_user.id)
 
-        # Клавиатура
         keyboard = [
             [InlineKeyboardButton(
                 text="🎮 Играть в GMPLAY",
@@ -227,7 +209,6 @@ async def cmd_start(message: types.Message):
             )]
         ]
 
-        # Кнопка админ-панели для админов
         if is_admin_user:
             keyboard.append([
                 InlineKeyboardButton(
@@ -243,7 +224,6 @@ async def cmd_start(message: types.Message):
 
         reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-        # Приветственное сообщение
         welcome_text = (
             "🚀 <b>Добро пожаловать в GMPLAY!</b>\n\n"
             "🎮 <b>Твоя победа начинается здесь!</b>\n\n"
@@ -263,16 +243,14 @@ async def cmd_start(message: types.Message):
 
 @dp.message(Command("admin"))
 async def cmd_admin(message: types.Message):
-    """Проверка админ-доступа"""
     if not is_admin(message.from_user.id):
         await message.answer("⛔ У вас нет доступа к этой команде.")
         return
 
-    webapp_url = f"{WEBAPP_URL}/admin.html"
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
             text="⚙️ Открыть админ-панель",
-            web_app=WebAppInfo(url=webapp_url)
+            web_app=WebAppInfo(url=f"{WEBAPP_URL}/admin.html")
         )]
     ])
 
@@ -286,7 +264,6 @@ async def cmd_admin(message: types.Message):
 
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
-    """Команда помощи"""
     await message.answer(
         "🤖 <b>Помощь по GMPLAY</b>\n\n"
         "/start — запустить бота\n"
@@ -299,20 +276,16 @@ async def cmd_help(message: types.Message):
 
 @dp.message(Command("me"))
 async def cmd_me(message: types.Message):
-    """Информация о пользователе"""
     user = get_user(message.from_user.id)
     if not user:
         await message.answer("❌ Пользователь не найден. Напишите /start")
         return
 
-    ref_code = ref_code_for(user["tg_id"])
-    balance = user["balance"]
-
     await message.answer(
         f"👤 <b>Ваш профиль</b>\n\n"
         f"🆔 ID: <code>{user['tg_id']}</code>\n"
-        f"💰 Баланс: <b>{balance} GMP</b>\n"
-        f"🔗 Реферальный код: <code>{ref_code}</code>\n\n"
+        f"💰 Баланс: <b>{user['balance']} GMP</b>\n"
+        f"🔗 Реферальный код: <code>{ref_code_for(user['tg_id'])}</code>\n\n"
         f"Приглашайте друзей и получайте 1% от их проигрышей!",
         parse_mode="HTML"
     )
@@ -320,167 +293,708 @@ async def cmd_me(message: types.Message):
 
 @dp.message()
 async def echo(message: types.Message):
-    """Ответ на любое сообщение"""
     await message.answer(
         "👋 Напишите /start, чтобы начать игру в GMPLAY!\n"
         "Или /help для справки."
     )
 
 
-# ==================== ЗАПУСК БОТА ====================
+# ==================== API ROUTES ====================
 
-async def main():
-    """Главная функция запуска бота"""
-    _init_db()
-    logger.info("🚀 Запуск бота GMPLAY...")
-    logger.info(f"📁 База данных: {DB_PATH}")
-    logger.info(f"🌐 WebApp URL: {WEBAPP_URL}")
+@app.route('/api/init', methods=['POST', 'OPTIONS'])
+def api_init():
+    if request.method == 'OPTIONS':
+        return jsonify({"ok": True})
 
-    # Запускаем краш-игру в отдельном потоке
-    threading.Thread(target=crash_game_loop, daemon=True).start()
+    data = request.json or {}
+    init_data = data.get("initData", "")
 
-    # Запускаем бота с long polling
-    logger.info("✅ Бот запущен и готов к работе!")
-    await dp.start_polling(bot)
+    logger.info(f"API init: {'✅ есть' if init_data else '❌ нет'}")
+
+    if not init_data:
+        return jsonify({
+            "guest": True,
+            "user_id": None,
+            "balance": STARTING_BALANCE,
+            "first_name": "Гость",
+            "last_name": "",
+            "ref_code": None,
+            "is_admin": False,
+            "message": "Открой приложение через Telegram-бота",
+        })
+
+    # Проверка подписи initData (упрощённо)
+    try:
+        import urllib.parse
+        import hashlib
+        import hmac
+
+        pairs = urllib.parse.parse_qsl(init_data, keep_blank_values=True)
+        params = dict(pairs)
+        received_hash = params.pop("hash", None)
+
+        if not received_hash:
+            return jsonify({"error": "invalid_init_data"}), 401
+
+        check_string = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
+        secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+        computed_hash = hmac.new(secret_key, check_string.encode(), hashlib.sha256).hexdigest()
+
+        if not hmac.compare_digest(computed_hash, received_hash):
+            return jsonify({"error": "invalid_init_data"}), 401
+
+        tg_user = json.loads(params.get("user", "{}"))
+
+    except Exception as e:
+        logger.error(f"Ошибка проверки initData: {e}")
+        return jsonify({"error": "invalid_init_data"}), 401
+
+    if not tg_user.get("id"):
+        return jsonify({"error": "no_user_in_init_data"}), 400
+
+    if is_user_banned(tg_user["id"]):
+        return jsonify({
+            "error": "banned",
+            "reason": "Нарушение правил",
+            "message": "⛔ Вы были забанены"
+        }), 403
+
+    start_param = data.get("start_param", "")
+    user, is_new = get_or_create_user(tg_user, start_param)
+
+    result = {
+        "guest": False,
+        "user_id": user["id"],
+        "tg_id": user["tg_id"],
+        "first_name": user.get("first_name", ""),
+        "last_name": user.get("last_name", ""),
+        "username": user.get("username", ""),
+        "balance": user["balance"],
+        "ref_code": ref_code_for(user["tg_id"]),
+        "is_admin": is_admin(user["tg_id"]),
+        "is_new": is_new,
+    }
+
+    return jsonify(result)
 
 
-# ==================== КРАШ-ИГРА ====================
+@app.route('/api/state', methods=['GET'])
+def api_state():
+    user_id = request.args.get('user_id', type=int)
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
 
-crash_state = {
-    "phase": "betting",
-    "round_id": 0,
-    "phase_started_at": int(time.time() * 1000),
-    "crash_point": None,
-    "bets": {},
-}
-crash_next_bet_id = 1
-crash_lock = threading.Lock()
+    user = get_user_by_id(user_id)
+    if not user:
+        return jsonify({"error": "user_not_found"}), 404
 
+    now = int(time.time() * 1000)
+    last = user.get("last_bonus_at")
+    ready = (last is None) or (now - last >= DAILY_BONUS_PERIOD_MS)
 
-def crash_roll_point():
-    r = random.random()
-    if r < 0.02:
-        return 1.00
-    point = 0.98 / (1 - r)
-    return round(min(point, 250), 2)
-
-
-def crash_current_multiplier():
-    if crash_state["phase"] != "playing":
-        return crash_state.get("crash_point") if crash_state["phase"] == "crashed" else 1.0
-    elapsed_s = (int(time.time() * 1000) - crash_state["phase_started_at"]) / 1000
-    m = math.exp(CRASH_GROWTH_RATE * elapsed_s)
-    return min(m, crash_state["crash_point"])
+    return jsonify({
+        "balance": user["balance"],
+        "daily_bonus_ready": ready,
+        "daily_bonus_next_at": None if ready else last + DAILY_BONUS_PERIOD_MS,
+        "is_admin": is_admin(user["tg_id"]),
+    })
 
 
-def crash_auto_cashout_tick(current_multiplier):
-    to_resolve = []
-    with crash_lock:
-        for bet_id, bet in list(crash_state["bets"].items()):
-            if bet["status"] == "active" and bet.get("auto_cashout") and current_multiplier >= bet["auto_cashout"]:
-                bet["status"] = "won"
-                bet["win_amount"] = bet["amount"] * bet["auto_cashout"]
-                bet["cashout_multiplier"] = bet["auto_cashout"]
-                to_resolve.append((bet_id, dict(bet)))
-
-    if not to_resolve:
-        return
+@app.route('/api/daily-bonus', methods=['POST'])
+def api_daily_bonus():
+    data = request.json or {}
+    user_id = data.get("user_id")
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
 
     with _db_lock:
         db = _load_db()
-        now = int(time.time() * 1000)
-
-        for bet_id, bet in to_resolve:
-            tg_id = bet["tg_id"]
-            key = str(tg_id)
-            if key in db["users"]:
-                user = db["users"][key]
-                win_amount = bet["amount"] * bet["auto_cashout"]
-                user["balance"] += win_amount
-
-                db["bets"].append({
-                    "id": db["_meta"]["bet_id_counter"],
-                    "user_id": bet["user_id"],
-                    "tg_id": tg_id,
-                    "game": "crash",
-                    "bet_amount": bet["amount"],
-                    "multiplier": bet["auto_cashout"],
-                    "result": "win",
-                    "win_amount": win_amount,
-                    "created_at": now,
-                })
-                db["_meta"]["bet_id_counter"] += 1
-
-        _save_db(db)
-
-
-def crash_resolve_round_losses():
-    with _db_lock:
-        db = _load_db()
-        now = int(time.time() * 1000)
-
-        for bet in list(crash_state["bets"].values()):
-            if bet["status"] == "active":
-                bet["status"] = "lost"
-                db["bets"].append({
-                    "id": db["_meta"]["bet_id_counter"],
-                    "user_id": bet["user_id"],
-                    "tg_id": bet["tg_id"],
-                    "game": "crash",
-                    "bet_amount": bet["amount"],
-                    "multiplier": crash_state["crash_point"],
-                    "result": "lose",
-                    "win_amount": 0,
-                    "created_at": now,
-                })
-                db["_meta"]["bet_id_counter"] += 1
-
-        _save_db(db)
-
-
-def crash_game_loop():
-    while True:
-        with crash_lock:
-            crash_state["phase"] = "betting"
-            crash_state["round_id"] += 1
-            crash_state["phase_started_at"] = int(time.time() * 1000)
-            crash_state["crash_point"] = crash_roll_point()
-            crash_state["bets"] = {}
-
-        time.sleep(CRASH_BETTING_MS / 1000)
-
-        with crash_lock:
-            crash_state["phase"] = "playing"
-            crash_state["phase_started_at"] = int(time.time() * 1000)
-            target = crash_state["crash_point"]
-
-        while True:
-            elapsed_s = (int(time.time() * 1000) - crash_state["phase_started_at"]) / 1000
-            m = math.exp(CRASH_GROWTH_RATE * elapsed_s)
-            if m >= target:
+        user = None
+        for u in db["users"].values():
+            if u.get("id") == user_id:
+                user = u
                 break
-            crash_auto_cashout_tick(min(m, target))
-            time.sleep(0.05)
 
-        with crash_lock:
-            crash_state["phase"] = "crashed"
-            crash_state["phase_started_at"] = int(time.time() * 1000)
+        if not user:
+            return jsonify({"error": "user_not_found"}), 404
 
-            with _db_lock:
-                db = _load_db()
-                db["crash"]["history"].insert(0, crash_state["crash_point"])
-                db["crash"]["history"] = db["crash"]["history"][:15]
-                _save_db(db)
+        now = int(time.time() * 1000)
+        last = user.get("last_bonus_at")
 
-            crash_resolve_round_losses()
+        if last is not None and now - last < DAILY_BONUS_PERIOD_MS:
+            return jsonify({
+                "granted": False,
+                "next_available_at": last + DAILY_BONUS_PERIOD_MS,
+                "balance": user["balance"],
+            })
 
-        time.sleep(CRASH_PAUSE_MS / 1000)
+        user["balance"] += DAILY_BONUS_AMOUNT
+        user["last_bonus_at"] = now
+        _save_db(db)
+
+        return jsonify({
+            "granted": True,
+            "balance": user["balance"],
+            "amount": DAILY_BONUS_AMOUNT
+        })
+
+
+@app.route('/api/history', methods=['GET'])
+def api_history():
+    user_id = request.args.get('user_id', type=int)
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+
+    limit = request.args.get('limit', 30, type=int)
+
+    with _db_lock:
+        db = _load_db()
+        bets = [b for b in db["bets"] if b.get("user_id") == user_id]
+        bets.sort(key=lambda x: x["created_at"], reverse=True)
+        bets = bets[:limit]
+
+        return jsonify({
+            "items": [{
+                "game": b["game"],
+                "bet_amount": b["bet_amount"],
+                "multiplier": b["multiplier"],
+                "result": b["result"],
+                "win_amount": b["win_amount"],
+                "created_at": b["created_at"],
+            } for b in bets]
+        })
+
+
+@app.route('/api/referrals', methods=['GET'])
+def api_referrals():
+    user_id = request.args.get('user_id', type=int)
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+
+    with _db_lock:
+        db = _load_db()
+        friends = []
+        total_earned = 0
+
+        for user in db["users"].values():
+            if user.get("referred_by") == user_id:
+                lost = sum(b["bet_amount"] for b in db["bets"]
+                           if b.get("user_id") == user["id"] and b.get("result") == "lose")
+                earned = round(lost * REFERRAL_CUT, 2)
+                total_earned += earned
+                friends.append({
+                    "first_name": user.get("first_name", ""),
+                    "last_name": user.get("last_name", ""),
+                    "lost_amount": lost,
+                    "earned": earned,
+                    "joined_at": user.get("created_at"),
+                })
+
+        return jsonify({
+            "count": len(friends),
+            "total_earned": round(total_earned, 2),
+            "friends": friends,
+        })
+
+
+@app.route('/api/leaderboard', methods=['GET'])
+def api_leaderboard():
+    period = request.args.get('period', 'day')
+    now = int(time.time() * 1000)
+    window = {"day": 86400000, "week": 7 * 86400000, "month": 30 * 86400000}.get(period, 86400000)
+    since = now - window
+
+    with _db_lock:
+        db = _load_db()
+        stats = {}
+
+        for bet in db["bets"]:
+            if bet["created_at"] < since:
+                continue
+            uid = bet["user_id"]
+            if uid not in stats:
+                stats[uid] = 0
+            if bet["result"] == "win":
+                stats[uid] += bet["win_amount"] - bet["bet_amount"]
+            else:
+                stats[uid] -= bet["bet_amount"]
+
+        items = []
+        for uid, net in sorted(stats.items(), key=lambda x: x[1], reverse=True)[:20]:
+            if net <= 0:
+                continue
+            user = get_user_by_id(uid)
+            if user:
+                items.append({
+                    "first_name": user.get("first_name", ""),
+                    "last_name": user.get("last_name", ""),
+                    "net": net,
+                })
+
+        return jsonify({"items": items})
+
+
+@app.route('/api/stats', methods=['GET'])
+def api_stats():
+    with _db_lock:
+        db = _load_db()
+        now = int(time.time() * 1000)
+        five_min_ago = now - 5 * 60 * 1000
+        today_start = now - (now % 86400000)
+
+        active = len(set(b.get("user_id") for b in db["bets"] if b["created_at"] >= five_min_ago))
+        won_today = sum(b["win_amount"] for b in db["bets"]
+                        if b["result"] == "win" and b["created_at"] >= today_start)
+
+        return jsonify({
+            "active_now": active,
+            "won_today": won_today,
+            "total_players": len(db["users"]),
+        })
+
+
+@app.route('/api/profile-stats', methods=['GET'])
+def api_profile_stats():
+    user_id = request.args.get('user_id', type=int)
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+
+    with _db_lock:
+        db = _load_db()
+        user_bets = [b for b in db["bets"] if b.get("user_id") == user_id]
+
+        return jsonify({
+            "bets_count": len(user_bets),
+            "total_won": sum(b["win_amount"] for b in user_bets if b["result"] == "win"),
+            "total_wagered": sum(b["bet_amount"] for b in user_bets),
+        })
+
+
+@app.route('/api/withdraw/create', methods=['POST'])
+def api_withdraw_create():
+    data = request.json or {}
+    user_id = data.get("user_id")
+    amount = data.get("amount")
+
+    if not user_id or not amount:
+        return jsonify({"error": "user_id and amount required"}), 400
+
+    with _db_lock:
+        db = _load_db()
+        user = None
+        for u in db["users"].values():
+            if u.get("id") == user_id:
+                user = u
+                break
+
+        if not user:
+            return jsonify({"error": "user_not_found"}), 404
+
+        if user["balance"] < amount:
+            return jsonify({"error": "Недостаточно GMP"}), 400
+
+        if amount < MIN_BALANCE_FOR_WITHDRAW:
+            return jsonify({"error": f"Минимальная сумма вывода: {MIN_BALANCE_FOR_WITHDRAW} GMP"}), 400
+
+        week_ago = int(time.time() * 1000) - WITHDRAW_WEEK_MS
+        deposits = [d for d in db["deposits"] if d.get("user_id") == user_id and d["processed_at"] >= week_ago]
+        total_deposits = sum(d["amount"] for d in deposits)
+
+        if total_deposits < MIN_DEPOSIT_FOR_WITHDRAW:
+            return jsonify({
+                "error": f"Для вывода нужен депозит от {MIN_DEPOSIT_FOR_WITHDRAW} GMP за последнюю неделю"
+            }), 400
+
+        user["balance"] -= amount
+        now = int(time.time() * 1000)
+
+        request_id = db["_meta"]["withdraw_id_counter"]
+        db["_meta"]["withdraw_id_counter"] += 1
+
+        db["withdraw_requests"].append({
+            "id": request_id,
+            "user_id": user_id,
+            "amount": amount,
+            "status": "pending",
+            "created_at": now,
+        })
+
+        _save_db(db)
+
+        return jsonify({
+            "request_id": request_id,
+            "amount": amount,
+            "status": "pending",
+            "created_at": now,
+            "balance": user["balance"],
+        })
+
+
+@app.route('/api/withdraw-requests', methods=['GET'])
+def api_withdraw_requests():
+    user_id = request.args.get('user_id', type=int)
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+
+    with _db_lock:
+        db = _load_db()
+        requests = [r for r in db["withdraw_requests"] if r.get("user_id") == user_id]
+        requests.sort(key=lambda x: x["created_at"], reverse=True)
+
+        return jsonify({
+            "items": [{
+                "id": r["id"],
+                "amount": r["amount"],
+                "status": r["status"],
+                "created_at": r["created_at"],
+                "processed_at": r.get("processed_at"),
+                "reject_reason": r.get("reject_reason"),
+            } for r in requests]
+        })
+
+
+@app.route('/api/crash/state', methods=['GET'])
+def api_crash_state():
+    user_id = request.args.get('user_id', type=int)
+
+    # Базовая заглушка для краша
+    return jsonify({
+        "phase": "betting",
+        "round_id": 1,
+        "phase_started_at": int(time.time() * 1000),
+        "server_now": int(time.time() * 1000),
+        "betting_duration": 6000,
+        "pause_duration": 2600,
+        "multiplier": 1.00,
+        "crash_point": None,
+        "history": [1.5, 2.3, 1.8, 3.2],
+        "my_bets": [],
+        "all_bets": [],
+        "total_players": 0,
+        "total_bets": 0,
+    })
+
+
+@app.route('/api/crash/bet', methods=['POST'])
+def api_crash_bet():
+    data = request.json or {}
+    user_id = data.get("user_id")
+    amount = data.get("amount")
+
+    if not user_id or not amount:
+        return jsonify({"error": "user_id and amount required"}), 400
+
+    if amount < CRASH_MIN_BET:
+        return jsonify({"error": "min_bet", "min_bet": CRASH_MIN_BET}), 400
+
+    with _db_lock:
+        db = _load_db()
+        user = None
+        for u in db["users"].values():
+            if u.get("id") == user_id:
+                user = u
+                break
+
+        if not user:
+            return jsonify({"error": "user_not_found"}), 404
+
+        if user["balance"] < amount:
+            return jsonify({"error": "insufficient_balance"}), 400
+
+        user["balance"] -= amount
+        _save_db(db)
+
+    return jsonify({
+        "bet_id": 1,
+        "balance": user["balance"],
+    })
+
+
+@app.route('/api/crash/cashout', methods=['POST'])
+def api_crash_cashout():
+    data = request.json or {}
+    user_id = data.get("user_id")
+
+    with _db_lock:
+        db = _load_db()
+        user = None
+        for u in db["users"].values():
+            if u.get("id") == user_id:
+                user = u
+                break
+
+        if not user:
+            return jsonify({"error": "user_not_found"}), 404
+
+        win_amount = 50  # Тестовое значение
+        user["balance"] += win_amount
+        _save_db(db)
+
+    return jsonify({
+        "balance": user["balance"],
+        "win_amount": win_amount,
+        "multiplier": 2.5,
+    })
+
+
+@app.route('/api/admin/users', methods=['GET'])
+def api_admin_users():
+    tg_id = request.args.get('tg_id', type=int)
+    if not tg_id or not is_admin(tg_id):
+        return jsonify({"error": "admin_required"}), 403
+
+    with _db_lock:
+        db = _load_db()
+        users = []
+        for user in db["users"].values():
+            banned = str(user["tg_id"]) in db["banned_users"]
+            users.append({
+                "id": user["id"],
+                "tg_id": user["tg_id"],
+                "first_name": user.get("first_name", ""),
+                "last_name": user.get("last_name", ""),
+                "username": user.get("username", ""),
+                "balance": user["balance"],
+                "created_at": user.get("created_at"),
+                "is_banned": banned,
+                "banned_reason": db["banned_users"].get(str(user["tg_id"]), {}).get("reason") if banned else None,
+            })
+
+        return jsonify({
+            "users": users,
+            "stats": {
+                "total_users": len(users),
+                "total_bets": len(db["bets"]),
+                "total_deposits": sum(d["amount"] for d in db["deposits"]),
+                "total_withdraws": sum(r["amount"] for r in db["withdraw_requests"] if r["status"] == "approved"),
+            }
+        })
+
+
+@app.route('/api/admin/withdraw-requests', methods=['GET'])
+def api_admin_withdraw_requests():
+    tg_id = request.args.get('tg_id', type=int)
+    if not tg_id or not is_admin(tg_id):
+        return jsonify({"error": "admin_required"}), 403
+
+    with _db_lock:
+        db = _load_db()
+        requests = []
+        for r in db["withdraw_requests"]:
+            if r["status"] == "pending":
+                user = get_user_by_id(r["user_id"])
+                requests.append({
+                    "id": r["id"],
+                    "user_id": r["user_id"],
+                    "tg_id": user["tg_id"] if user else None,
+                    "first_name": user.get("first_name", "") if user else "",
+                    "username": user.get("username", "") if user else "",
+                    "amount": r["amount"],
+                    "created_at": r["created_at"],
+                })
+
+        return jsonify({"requests": requests})
+
+
+@app.route('/api/admin/ban', methods=['POST'])
+def api_admin_ban():
+    data = request.json or {}
+    tg_id = data.get("tg_id")
+    reason = data.get("reason", "Нарушение правил")
+    admin_tg_id = data.get("admin_tg_id")
+
+    if not admin_tg_id or not is_admin(admin_tg_id):
+        return jsonify({"error": "admin_required"}), 403
+
+    if not tg_id:
+        return jsonify({"error": "tg_id required"}), 400
+
+    user = get_user(tg_id)
+    if not user:
+        return jsonify({"error": "user_not_found"}), 404
+
+    with _db_lock:
+        db = _load_db()
+        db["banned_users"][str(tg_id)] = {
+            "reason": reason,
+            "banned_at": int(time.time() * 1000),
+            "banned_by": admin_tg_id,
+        }
+        _save_db(db)
+
+    return jsonify({"success": True, "tg_id": tg_id})
+
+
+@app.route('/api/admin/unban', methods=['POST'])
+def api_admin_unban():
+    data = request.json or {}
+    tg_id = data.get("tg_id")
+    admin_tg_id = data.get("admin_tg_id")
+
+    if not admin_tg_id or not is_admin(admin_tg_id):
+        return jsonify({"error": "admin_required"}), 403
+
+    if not tg_id:
+        return jsonify({"error": "tg_id required"}), 400
+
+    with _db_lock:
+        db = _load_db()
+        db["banned_users"].pop(str(tg_id), None)
+        _save_db(db)
+
+    return jsonify({"success": True, "tg_id": tg_id})
+
+
+@app.route('/api/admin/withdraw/approve', methods=['POST'])
+def api_admin_withdraw_approve():
+    data = request.json or {}
+    request_id = data.get("request_id")
+    admin_tg_id = data.get("admin_tg_id")
+
+    if not admin_tg_id or not is_admin(admin_tg_id):
+        return jsonify({"error": "admin_required"}), 403
+
+    with _db_lock:
+        db = _load_db()
+        for r in db["withdraw_requests"]:
+            if r["id"] == request_id and r["status"] == "pending":
+                r["status"] = "approved"
+                r["processed_at"] = int(time.time() * 1000)
+                break
+        _save_db(db)
+
+    return jsonify({"success": True})
+
+
+@app.route('/api/admin/withdraw/reject', methods=['POST'])
+def api_admin_withdraw_reject():
+    data = request.json or {}
+    request_id = data.get("request_id")
+    reason = data.get("reason", "Отклонено администратором")
+    admin_tg_id = data.get("admin_tg_id")
+
+    if not admin_tg_id or not is_admin(admin_tg_id):
+        return jsonify({"error": "admin_required"}), 403
+
+    with _db_lock:
+        db = _load_db()
+        for r in db["withdraw_requests"]:
+            if r["id"] == request_id and r["status"] == "pending":
+                r["status"] = "rejected"
+                r["reject_reason"] = reason
+                r["processed_at"] = int(time.time() * 1000)
+
+                # Возвращаем баланс
+                user = get_user_by_id(r["user_id"])
+                if user:
+                    key = str(user["tg_id"])
+                    if key in db["users"]:
+                        db["users"][key]["balance"] += r["amount"]
+                break
+        _save_db(db)
+
+    return jsonify({"success": True})
+
+
+@app.route('/api/admin/deposit/approve', methods=['POST'])
+def api_admin_deposit_approve():
+    data = request.json or {}
+    deposit_id = data.get("deposit_id")
+    admin_tg_id = data.get("admin_tg_id")
+
+    if not admin_tg_id or not is_admin(admin_tg_id):
+        return jsonify({"error": "admin_required"}), 403
+
+    with _db_lock:
+        db = _load_db()
+        for d in db["deposits"]:
+            if d["id"] == deposit_id and d.get("status") == "pending":
+                d["status"] = "approved"
+                d["processed_at"] = int(time.time() * 1000)
+
+                user = get_user_by_id(d["user_id"])
+                if user:
+                    key = str(user["tg_id"])
+                    if key in db["users"]:
+                        db["users"][key]["balance"] += d["amount"]
+                break
+        _save_db(db)
+
+    return jsonify({"success": True})
+
+
+@app.route('/api/admin/deposit-requests', methods=['GET'])
+def api_admin_deposit_requests():
+    tg_id = request.args.get('tg_id', type=int)
+    if not tg_id or not is_admin(tg_id):
+        return jsonify({"error": "admin_required"}), 403
+
+    with _db_lock:
+        db = _load_db()
+        deposits = []
+        for d in db["deposits"]:
+            if d.get("status") == "pending":
+                user = get_user_by_id(d["user_id"])
+                deposits.append({
+                    "id": d["id"],
+                    "user_id": d["user_id"],
+                    "tg_id": user["tg_id"] if user else None,
+                    "first_name": user.get("first_name", "") if user else "",
+                    "username": user.get("username", "") if user else "",
+                    "amount": d["amount"],
+                    "from_name": d.get("from_name", ""),
+                    "created_at": d["processed_at"],
+                })
+
+        return jsonify({"requests": deposits})
+
+
+@app.route('/', methods=['GET'])
+def index():
+    return jsonify({
+        "name": "GMPLAY Bot",
+        "status": "online",
+        "version": "1.0.0"
+    })
+
+
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({"status": "ok"})
 
 
 # ==================== ЗАПУСК ====================
 
-if __name__ == "__main__":
+async def start_bot():
+    """Запуск бота в отдельном потоке"""
+    logger.info("🚀 Запуск бота...")
+
+    # Удаляем вебхук
     try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("👋 Бот остановлен")
+        await bot.delete_webhook(drop_pending_updates=True)
+        logger.info("✅ Вебхук удалён")
+    except Exception as e:
+        logger.error(f"❌ Ошибка удаления вебхука: {e}")
+
+    await dp.start_polling(bot)
+
+
+def run_bot():
+    """Запуск бота в отдельном потоке"""
+    asyncio.run(start_bot())
+
+
+if __name__ == "__main__":
+    _init_db()
+    logger.info("🚀 Запуск GMPLAY...")
+    logger.info(f"📁 База данных: {DB_PATH}")
+    logger.info(f"🌐 WebApp URL: {WEBAPP_URL}")
+
+    # Запускаем бота в отдельном потоке
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+
+    # Запускаем Flask (API)
+    port = int(os.getenv('PORT', 3000))
+    logger.info(f"✅ API сервер запущен на порту {port}")
+    app.run(host='0.0.0.0', port=port, debug=False)
