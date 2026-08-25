@@ -1,0 +1,1576 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GMPLAY</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        /* ========== ОБНОВЛЁННЫЙ ДИЗАЙН ========== */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            -webkit-tap-highlight-color: transparent;
+        }
+        :root {
+            --bg-primary: #07070d;
+            --bg-secondary: #0f0f18;
+            --bg-card: rgba(255, 255, 255, 0.04);
+            --bg-card-hover: rgba(255, 255, 255, 0.07);
+            --border: rgba(255, 255, 255, 0.06);
+            --border-active: rgba(0, 152, 234, 0.3);
+            --text-primary: #ffffff;
+            --text-secondary: #8888aa;
+            --text-muted: #555577;
+            --accent: #0098EA;
+            --accent-dark: #0070b0;
+            --accent-glow: 0 0 30px rgba(0, 152, 234, 0.15);
+            --green: #10b981;
+            --green-dark: #0a8a5e;
+            --red: #ef4444;
+            --red-dark: #b91c1c;
+            --yellow: #f59e0b;
+            --gold: #fbbf24;
+            --radius: 16px;
+            --radius-sm: 10px;
+            --radius-full: 999px;
+            --font: 'Inter', sans-serif;
+            --font-display: 'Space Grotesk', sans-serif;
+            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        body {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: var(--font);
+            min-height: 100vh;
+            padding: 0;
+            margin: 0;
+            overflow-x: hidden;
+        }
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--accent);
+            border-radius: 10px;
+        }
+
+        /* ========== PRELOADER ========== */
+        #preloader {
+            position: fixed;
+            inset: 0;
+            z-index: 999;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 24px;
+            background: var(--bg-primary);
+            transition: opacity 0.6s ease, transform 0.6s ease;
+        }
+        #preloader.done {
+            opacity: 0;
+            transform: scale(1.05);
+            pointer-events: none;
+        }
+        .preloader-spinner {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            border: 3px solid rgba(255, 255, 255, 0.06);
+            border-top-color: var(--accent);
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+        .preloader-text {
+            font-size: 14px;
+            color: var(--text-secondary);
+            letter-spacing: 0.5px;
+        }
+        .preloader-progress {
+            width: 120px;
+            height: 3px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.06);
+            overflow: hidden;
+        }
+        .preloader-progress .fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, var(--accent), var(--green));
+            border-radius: 10px;
+            transition: width 0.3s ease;
+        }
+
+        /* ========== APP SHELL ========== */
+        .app {
+            max-width: 480px;
+            margin: 0 auto;
+            padding: 0 16px 100px;
+            opacity: 0;
+            transform: translateY(12px);
+            transition: opacity 0.5s ease 0.2s, transform 0.5s ease 0.2s;
+        }
+        body.ready .app {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* ========== HEADER ========== */
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px 0;
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            background: var(--bg-primary);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+        .header .logo {
+            font-family: var(--font-display);
+            font-size: 20px;
+            font-weight: 700;
+            background: linear-gradient(180deg, #fff, #9fd8ff);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .header .logo .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent);
+            box-shadow: 0 0 12px rgba(0, 152, 234, 0.6);
+        }
+        .header .balance {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border-radius: var(--radius-full);
+            background: rgba(0, 152, 234, 0.08);
+            border: 1px solid rgba(0, 152, 234, 0.15);
+            font-weight: 700;
+            font-size: 14px;
+            color: #fff;
+        }
+        .header .balance svg {
+            width: 16px;
+            height: 16px;
+            color: var(--gold);
+        }
+        .header .avatar {
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 14px;
+            background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            flex-shrink: 0;
+            cursor: pointer;
+        }
+
+        /* ========== HERO ========== */
+        .hero {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px 20px;
+            margin-bottom: 20px;
+            position: relative;
+            overflow: hidden;
+        }
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -20%;
+            width: 200px;
+            height: 200px;
+            background: radial-gradient(circle, rgba(0, 152, 234, 0.08), transparent 70%);
+            pointer-events: none;
+        }
+        .hero .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+        .hero h1 {
+            font-family: var(--font-display);
+            font-size: 26px;
+            font-weight: 700;
+            line-height: 1.2;
+            margin-bottom: 8px;
+        }
+        .hero h1 .highlight {
+            background: linear-gradient(90deg, var(--accent), #7fd6ff);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+        .hero p {
+            color: var(--text-secondary);
+            font-size: 14px;
+            line-height: 1.6;
+            margin-bottom: 16px;
+        }
+        .hero .actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .btn-primary {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 24px;
+            border-radius: var(--radius);
+            border: none;
+            font-weight: 700;
+            font-size: 14px;
+            color: #fff;
+            background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+            box-shadow: 0 4px 20px rgba(0, 152, 234, 0.3);
+            cursor: pointer;
+            transition: var(--transition);
+        }
+        .btn-primary:active {
+            transform: scale(0.96);
+        }
+        .btn-secondary {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 24px;
+            border-radius: var(--radius);
+            border: 1px solid var(--border);
+            font-weight: 700;
+            font-size: 14px;
+            color: var(--text-primary);
+            background: rgba(255, 255, 255, 0.03);
+            cursor: pointer;
+            transition: var(--transition);
+        }
+        .btn-secondary:active {
+            transform: scale(0.96);
+            background: rgba(255, 255, 255, 0.06);
+        }
+        .btn-primary svg,
+        .btn-secondary svg {
+            width: 18px;
+            height: 18px;
+        }
+
+        /* ========== STATS ROW ========== */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin: 16px 0 20px;
+        }
+        .stat-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 14px 10px;
+            text-align: center;
+        }
+        .stat-box .num {
+            font-family: var(--font-display);
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--accent);
+        }
+        .stat-box .label {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-top: 2px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        /* ========== GAME GRID ========== */
+        .section-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin: 24px 0 12px;
+        }
+        .section-title h2 {
+            font-family: var(--font-display);
+            font-size: 18px;
+            font-weight: 600;
+        }
+        .section-title .link {
+            font-size: 13px;
+            color: var(--accent);
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .game-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        .game-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 18px 14px;
+            cursor: pointer;
+            transition: var(--transition);
+            text-align: center;
+        }
+        .game-card:active {
+            transform: scale(0.96);
+            border-color: var(--border-active);
+        }
+        .game-card .icon {
+            font-size: 32px;
+            margin-bottom: 8px;
+        }
+        .game-card h3 {
+            font-size: 14px;
+            font-weight: 700;
+            margin-bottom: 2px;
+        }
+        .game-card p {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+        .game-card .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 10px;
+            color: var(--green);
+            font-weight: 600;
+        }
+        .game-card .status .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--green);
+            animation: pulse-dot 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse-dot {
+            0%,
+            100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.3;
+            }
+        }
+
+        /* ========== BOTTOM NAV ========== */
+        .bottom-nav {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 30;
+            max-width: 480px;
+            margin: 0 auto;
+            padding: 8px 12px 12px;
+            background: rgba(7, 7, 13, 0.85);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border-top: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-around;
+        }
+        .nav-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 10px;
+            font-weight: 600;
+            padding: 6px 12px;
+            cursor: pointer;
+            transition: var(--transition);
+            position: relative;
+        }
+        .nav-btn svg {
+            width: 22px;
+            height: 22px;
+            transition: var(--transition);
+        }
+        .nav-btn.active {
+            color: var(--accent);
+        }
+        .nav-btn.active svg {
+            filter: drop-shadow(0 0 8px rgba(0, 152, 234, 0.3));
+        }
+        .nav-btn .badge-nav {
+            position: absolute;
+            top: 2px;
+            right: 4px;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: var(--red);
+            color: #fff;
+            font-size: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+        }
+
+        /* ========== SCREENS ========== */
+        .screen {
+            display: none;
+            animation: fadeUp 0.4s ease;
+        }
+        .screen.active {
+            display: block;
+        }
+        @keyframes fadeUp {
+            from {
+                opacity: 0;
+                transform: translateY(12px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* ========== LIST ITEMS ========== */
+        .list-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 14px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            margin-bottom: 6px;
+            transition: var(--transition);
+        }
+        .list-item .avatar-sm {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 13px;
+            flex-shrink: 0;
+        }
+        .list-item .info {
+            flex: 1;
+            min-width: 0;
+        }
+        .list-item .info .name {
+            font-weight: 600;
+            font-size: 14px;
+        }
+        .list-item .info .sub {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+        .list-item .value {
+            font-weight: 700;
+            font-size: 14px;
+            color: var(--green);
+            flex-shrink: 0;
+        }
+        .list-item .value.loss {
+            color: var(--red);
+        }
+        .list-item .value.gold {
+            color: var(--gold);
+        }
+
+        /* ========== DAILY BONUS ========== */
+        .daily-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 16px 18px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 16px;
+        }
+        .daily-card .icon {
+            width: 44px;
+            height: 44px;
+            border-radius: var(--radius-sm);
+            background: linear-gradient(135deg, var(--gold), #f59e0b);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            flex-shrink: 0;
+        }
+        .daily-card .info {
+            flex: 1;
+        }
+        .daily-card .info .title {
+            font-weight: 700;
+            font-size: 14px;
+        }
+        .daily-card .info .sub {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .daily-card .btn-claim {
+            padding: 10px 18px;
+            border: none;
+            border-radius: var(--radius-sm);
+            font-weight: 700;
+            font-size: 13px;
+            background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+            color: #fff;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+        .daily-card .btn-claim:disabled {
+            opacity: 0.4;
+            cursor: default;
+        }
+        .daily-card .btn-claim:active:not(:disabled) {
+            transform: scale(0.95);
+        }
+
+        /* ========== PROFILE ========== */
+        .profile-header {
+            text-align: center;
+            padding: 20px 0;
+        }
+        .profile-header .avatar-lg {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            margin: 0 auto 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: var(--font-display);
+            font-size: 32px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+            border: 2px solid rgba(255, 255, 255, 0.1);
+        }
+        .profile-header .name {
+            font-family: var(--font-display);
+            font-size: 20px;
+            font-weight: 700;
+        }
+        .profile-header .id {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
+        .profile-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin: 16px 0;
+        }
+        .profile-stats .stat {
+            text-align: center;
+            padding: 12px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+        }
+        .profile-stats .stat .num {
+            font-family: var(--font-display);
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--accent);
+        }
+        .profile-stats .stat .label {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+
+        /* ========== TOAST ========== */
+        .toast {
+            position: fixed;
+            bottom: 90px;
+            left: 50%;
+            transform: translateX(-50%) translateY(20px);
+            background: rgba(15, 15, 24, 0.95);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-full);
+            padding: 12px 24px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #fff;
+            z-index: 50;
+            opacity: 0;
+            pointer-events: none;
+            transition: all 0.4s ease;
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+        }
+        .toast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        /* ========== SHEETS ========== */
+        .sheet-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 100;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+        .sheet-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .sheet {
+            width: 100%;
+            max-width: 480px;
+            background: var(--bg-secondary);
+            border-radius: 24px 24px 0 0;
+            padding: 20px 20px 32px;
+            transform: translateY(100%);
+            transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+            border-top: 1px solid var(--border);
+        }
+        .sheet-overlay.active .sheet {
+            transform: translateY(0);
+        }
+        .sheet .handle {
+            width: 40px;
+            height: 4px;
+            border-radius: 10px;
+            background: var(--text-muted);
+            margin: 0 auto 16px;
+        }
+        .sheet h3 {
+            font-family: var(--font-display);
+            font-size: 20px;
+            font-weight: 700;
+            text-align: center;
+            margin-bottom: 4px;
+        }
+        .sheet p.sub {
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 13px;
+            margin-bottom: 20px;
+        }
+        .sheet .field {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        .sheet .field input {
+            background: none;
+            border: none;
+            outline: none;
+            color: #fff;
+            font-size: 16px;
+            font-weight: 600;
+            width: 100%;
+            font-family: var(--font);
+        }
+        .sheet .field input::placeholder {
+            color: var(--text-muted);
+        }
+        .sheet .field .suffix {
+            color: var(--text-secondary);
+            font-weight: 600;
+            font-size: 13px;
+        }
+        .sheet .btn-full {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: var(--radius-sm);
+            font-weight: 700;
+            font-size: 15px;
+            background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+            color: #fff;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+        .sheet .btn-full:active {
+            transform: scale(0.97);
+        }
+        .sheet .btn-full.outline {
+            background: transparent;
+            border: 1px solid var(--border);
+            margin-top: 8px;
+        }
+        .sheet .btn-close {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 20px;
+            cursor: pointer;
+        }
+
+        /* ========== RESPONSIVE ========== */
+        @media (max-width: 480px) {
+            .hero h1 {
+                font-size: 22px;
+            }
+            .game-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+            .stats-row {
+                grid-template-columns: repeat(3, 1fr);
+            }
+            .profile-stats {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+        @media (max-width: 380px) {
+            .game-grid {
+                grid-template-columns: 1fr;
+            }
+            .hero .actions {
+                flex-direction: column;
+            }
+            .hero .actions .btn-primary,
+            .hero .actions .btn-secondary {
+                justify-content: center;
+            }
+        }
+
+        /* ========== ADMIN BADGE ========== */
+        .admin-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 10px;
+            border-radius: var(--radius-full);
+            font-size: 10px;
+            font-weight: 700;
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--red);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+        .admin-badge svg {
+            width: 12px;
+            height: 12px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- PRELOADER -->
+    <div id="preloader">
+        <div class="preloader-spinner"></div>
+        <div class="preloader-text">Загрузка GMPLAY...</div>
+        <div class="preloader-progress"><div class="fill" id="preloaderFill"></div></div>
+    </div>
+
+    <!-- TOAST -->
+    <div class="toast" id="toast"></div>
+
+    <!-- APP -->
+    <div class="app" id="app">
+
+        <!-- HEADER -->
+        <header class="header">
+            <div class="logo"><span class="dot"></span>GMPLAY</div>
+            <div class="balance" id="headerBalance">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9.5c0-1.5 1.5-2 3-2s3 .8 3 2c0 3-6 1.5-6 4.5 0 1.3 1.5 2 3 2s3-.5 3-2" stroke-linecap="round"/></svg>
+                <span id="balanceText">0</span>
+            </div>
+            <div class="avatar" id="avatarBtn">Г</div>
+        </header>
+
+        <!-- SCREENS -->
+        <div id="screens">
+
+            <!-- HOME -->
+            <div class="screen active" id="screen-home">
+                <div class="hero">
+                    <div class="badge">🎮 Сейчас в игре: <span id="activeNow">—</span></div>
+                    <h1>Твоя <span class="highlight">победа</span> начинается здесь</h1>
+                    <p>Играй в Краш, забирай выигрыш до того, как ракета улетит. Без границ и задержек.</p>
+                    <div class="actions">
+                        <button class="btn-primary" onclick="openCrash()">
+                            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5-11-6.5Z"/></svg>
+                            Играть сейчас
+                        </button>
+                        <button class="btn-secondary" onclick="goTo('profile')">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9.5c0-1.5 1.5-2 3-2s3 .8 3 2c0 3-6 1.5-6 4.5 0 1.3 1.5 2 3 2s3-.5 3-2"/></svg>
+                            Профиль
+                        </button>
+                    </div>
+                    <div class="stats-row">
+                        <div class="stat-box"><div class="num" id="statWon">—</div><div class="label">Выиграно сегодня</div></div>
+                        <div class="stat-box"><div class="num" id="statPlayers">—</div><div class="label">Игроков</div></div>
+                        <div class="stat-box"><div class="num">24/7</div><div class="label">Без пауз</div></div>
+                    </div>
+                </div>
+
+                <!-- Daily Bonus -->
+                <div class="daily-card" id="dailyBonusCard">
+                    <div class="icon">🎁</div>
+                    <div class="info">
+                        <div class="title">Ежедневный бонус</div>
+                        <div class="sub" id="dailySub">Проверяем...</div>
+                    </div>
+                    <button class="btn-claim" id="dailyBtn">+2 GMP</button>
+                </div>
+
+                <div class="section-title">
+                    <h2>Популярные игры</h2>
+                </div>
+                <div class="game-grid" id="gameGrid">
+                    <div class="game-card" onclick="openCrash()">
+                        <div class="icon">🚀</div>
+                        <h3>Краш</h3>
+                        <p>Ракета летит — забирай вовремя</p>
+                        <div class="status"><span class="dot"></span>Live</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TOP -->
+            <div class="screen" id="screen-top">
+                <div class="section-title" style="margin-top:4px;">
+                    <h2>🏆 Таблица лидеров</h2>
+                </div>
+                <div style="display:flex;gap:6px;margin-bottom:16px;" id="topFilters">
+                    <button class="btn-secondary" style="flex:1;padding:10px;font-size:12px;justify-content:center;" data-range="day">День</button>
+                    <button class="btn-secondary" style="flex:1;padding:10px;font-size:12px;justify-content:center;" data-range="week">Неделя</button>
+                    <button class="btn-secondary" style="flex:1;padding:10px;font-size:12px;justify-content:center;" data-range="month">Месяц</button>
+                </div>
+                <div id="leaderList"></div>
+            </div>
+
+            <!-- HISTORY -->
+            <div class="screen" id="screen-history">
+                <div class="section-title" style="margin-top:4px;">
+                    <h2>📜 История игр</h2>
+                </div>
+                <div id="historyList"></div>
+            </div>
+
+            <!-- REFERRAL -->
+            <div class="screen" id="screen-referral">
+                <div class="hero" style="text-align:center;">
+                    <div style="font-size:48px;margin-bottom:8px;">👥</div>
+                    <h1 style="font-size:20px;">Приглашай друзей</h1>
+                    <p>Получай 1% от проигрышей рефералов навсегда.</p>
+                    <div style="display:flex;align-items:center;gap:8px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;margin:12px 0;">
+                        <span style="font-family:var(--font-display);font-weight:700;font-size:14px;flex:1;" id="refCode">—</span>
+                        <button class="btn-secondary" style="padding:6px 12px;font-size:12px;" id="copyBtn">Копировать</button>
+                    </div>
+                    <button class="btn-primary" style="width:100%;justify-content:center;" id="shareBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="M8.2 10.7 15.8 6.3M8.2 13.3l7.6 4.4"/></svg>
+                        Поделиться
+                    </button>
+                </div>
+                <div class="stats-row" style="margin:12px 0;">
+                    <div class="stat-box"><div class="num" id="refCount">0</div><div class="label">Друзей</div></div>
+                    <div class="stat-box"><div class="num" id="refEarned">0</div><div class="label">Заработано</div></div>
+                </div>
+                <div id="friendsList"></div>
+            </div>
+
+            <!-- PROFILE -->
+            <div class="screen" id="screen-profile">
+                <div class="profile-header">
+                    <div class="avatar-lg" id="profileAvatar">Г</div>
+                    <div class="name" id="profileName">Гость</div>
+                    <div class="id" id="profileId">—</div>
+                    <div style="margin-top:6px;" id="adminBadge"></div>
+                </div>
+                <div class="profile-stats">
+                    <div class="stat"><div class="num" id="pBets">0</div><div class="label">Ставок</div></div>
+                    <div class="stat"><div class="num" id="pWon">0</div><div class="label">Выиграно</div></div>
+                    <div class="stat"><div class="num" id="pBalance">0</div><div class="label">Баланс</div></div>
+                </div>
+                <div style="display:flex;gap:10px;margin:12px 0;">
+                    <button class="btn-primary" style="flex:1;justify-content:center;" onclick="openDeposit()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17 17 7M9 7h8v8"/></svg>
+                        Пополнить
+                    </button>
+                    <button class="btn-secondary" style="flex:1;justify-content:center;" onclick="openWithdraw()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 7 7 17M15 17H7V9"/></svg>
+                        Вывести
+                    </button>
+                </div>
+                <div class="section-title"><h2>📋 Заявки на вывод</h2></div>
+                <div id="withdrawRequests"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- BOTTOM NAV -->
+    <nav class="bottom-nav" id="bottomNav">
+        <button class="nav-btn active" data-screen="home">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v9a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1v-9"/></svg>
+            <span>Главная</span>
+        </button>
+        <button class="nav-btn" data-screen="top">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 4h8v5a4 4 0 0 1-8 0V4Z"/><path d="M8 5H4v2a4 4 0 0 0 4 4"/><path d="M16 5h4v2a4 4 0 0 1-4 4"/><path d="M12 13v3"/><path d="M9 20h6"/><path d="M10 16h4l1 4H9l1-4Z"/></svg>
+            <span>Топ</span>
+        </button>
+        <button class="nav-btn" data-screen="history">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+            <span>История</span>
+        </button>
+        <button class="nav-btn" data-screen="referral">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 19c0-3.3 2.9-5.5 6.5-5.5s6.5 2.2 6.5 5.5"/><circle cx="17" cy="8.5" r="2.6"/><path d="M15.5 13.6c2.6.3 4.5 2.2 4.5 5.4"/></svg>
+            <span>Друзья</span>
+        </button>
+        <button class="nav-btn" data-screen="profile">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.5-7 8-7s8 3 8 7"/></svg>
+            <span>Профиль</span>
+        </button>
+    </nav>
+
+    <!-- SHEETS -->
+    <div class="sheet-overlay" id="depositSheet" onclick="if(event.target===this)closeSheet('depositSheet')">
+        <div class="sheet" style="position:relative;">
+            <button class="btn-close" onclick="closeSheet('depositSheet')">✕</button>
+            <div class="handle"></div>
+            <h3>💰 Пополнение</h3>
+            <p class="sub">Переведите средства через @gminesbot</p>
+            <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;margin-bottom:16px;">
+                <div style="font-size:12px;color:var(--text-secondary);">Инструкция:</div>
+                <div style="font-size:13px;margin-top:6px;line-height:1.6;">
+                    1. Перейдите в <b>@gminesbot</b><br>
+                    2. Отправьте <code style="background:rgba(255,255,255,0.06);padding:2px 8px;border-radius:4px;">/send 100 @gmp_help</code><br>
+                    3. Баланс пополнится автоматически
+                </div>
+            </div>
+            <button class="btn-full" onclick="window.open('https://t.me/gminesbot','_blank')">Перейти в @gminesbot</button>
+            <button class="btn-full outline" onclick="closeSheet('depositSheet')">Закрыть</button>
+        </div>
+    </div>
+
+    <div class="sheet-overlay" id="withdrawSheet" onclick="if(event.target===this)closeSheet('withdrawSheet')">
+        <div class="sheet" style="position:relative;">
+            <button class="btn-close" onclick="closeSheet('withdrawSheet')">✕</button>
+            <div class="handle"></div>
+            <h3>💸 Вывод</h3>
+            <p class="sub" id="withdrawInfo">Доступно: 0 GMP</p>
+            <div class="field">
+                <input type="number" id="withdrawInput" placeholder="Сумма" min="10">
+                <span class="suffix">GMP</span>
+            </div>
+            <button class="btn-full" onclick="confirmWithdraw()">Отправить заявку</button>
+            <button class="btn-full outline" onclick="closeSheet('withdrawSheet')">Закрыть</button>
+        </div>
+    </div>
+
+    <!-- CRASH VIEW -->
+    <div class="sheet-overlay" id="crashView" onclick="if(event.target===this)closeCrash()">
+        <div class="sheet" style="border-radius:24px 24px 0 0;max-height:90vh;overflow-y:auto;padding-bottom:20px;">
+            <button class="btn-close" onclick="closeCrash()">✕</button>
+            <div class="handle"></div>
+            <div style="text-align:center;padding:8px 0;">
+                <div style="font-size:48px;font-weight:700;font-family:var(--font-display);color:var(--green);" id="crashMultiplier">1.00×</div>
+                <div style="font-size:12px;color:var(--text-secondary);" id="crashStatus">Ожидание...</div>
+                <div style="display:flex;gap:12px;justify-content:center;margin:8px 0;font-size:12px;color:var(--text-secondary);">
+                    <span>👥 <span id="crashPlayers">0</span></span>
+                    <span>🎯 <span id="crashBets">0</span></span>
+                </div>
+            </div>
+            <div style="display:flex;gap:6px;overflow-x:auto;padding:8px 0;margin-bottom:12px;" id="crashHistory"></div>
+
+            <!-- Bet Input -->
+            <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;">
+                <div style="display:flex;gap:8px;margin-bottom:8px;">
+                    <button class="btn-secondary" style="padding:8px 12px;font-size:12px;" onclick="adjustBet(0.5)">½</button>
+                    <div class="field" style="flex:1;margin:0;">
+                        <input type="number" id="crashBetAmount" value="10" min="1" step="1">
+                        <span class="suffix">GMP</span>
+                    </div>
+                    <button class="btn-secondary" style="padding:8px 12px;font-size:12px;" onclick="adjustBet(2)">2×</button>
+                </div>
+                <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;">
+                    <button class="btn-secondary" style="padding:4px 10px;font-size:11px;" onclick="setBet(50)">50</button>
+                    <button class="btn-secondary" style="padding:4px 10px;font-size:11px;" onclick="setBet(100)">100</button>
+                    <button class="btn-secondary" style="padding:4px 10px;font-size:11px;" onclick="setBet(250)">250</button>
+                    <button class="btn-secondary" style="padding:4px 10px;font-size:11px;" onclick="setBet(500)">500</button>
+                    <button class="btn-secondary" style="padding:4px 10px;font-size:11px;" onclick="setBet('max')">MAX</button>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);">
+                        <input type="checkbox" id="crashAutoCashout">
+                        Автовывод
+                    </label>
+                    <input type="number" id="crashAutoValue" value="2.00" step="0.1" min="1.01" style="width:70px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:#fff;font-size:13px;">
+                    <span style="font-size:12px;color:var(--text-secondary);">×</span>
+                </div>
+                <button class="btn-primary" style="width:100%;justify-content:center;font-size:16px;padding:16px;" id="crashBetBtn" onclick="placeCrashBet()">
+                    🚀 Сделать ставку
+                </button>
+                <div id="crashMyBets" style="margin-top:10px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============ ИНИЦИАЛИЗАЦИЯ ============
+        const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+        if (tg) { tg.ready();
+            tg.expand(); }
+
+        const API_BASE = '';
+        let currentUser = null;
+        let appBalance = 0;
+        let isAdmin = false;
+        let crashInterval = null;
+        let crashData = null;
+
+        // ============ ПРЕЛОАДЕР ============
+        let progress = 0;
+        const preloaderInterval = setInterval(() => {
+            progress += Math.random() * 15 + 5;
+            if (progress >= 100) { progress = 100;
+                clearInterval(preloaderInterval);
+                setTimeout(() => {
+                    document.getElementById('preloader').classList.add('done');
+                    document.body.classList.add('ready');
+                    setTimeout(() => document.getElementById('preloader').style.display = 'none', 600);
+                }, 300); }
+            document.getElementById('preloaderFill').style.width = progress + '%';
+        }, 150);
+
+        // ============ НАВИГАЦИЯ ============
+        function goTo(screen) {
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            document.getElementById('screen-' + screen).classList.add('active');
+            document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.screen === screen));
+            if (screen === 'top') loadLeaderboard('day');
+            if (screen === 'history') loadHistory();
+            if (screen === 'referral') loadReferrals();
+            if (screen === 'profile') loadProfileStats();
+        }
+
+        document.querySelectorAll('.nav-btn').forEach(btn => {
+            btn.addEventListener('click', () => goTo(btn.dataset.screen));
+        });
+        document.getElementById('avatarBtn').addEventListener('click', () => goTo('profile'));
+
+        // Tabs for leaderboard
+        document.querySelectorAll('#topFilters .btn-secondary').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('#topFilters .btn-secondary').forEach(b => b.style.borderColor =
+                    'var(--border)');
+                btn.style.borderColor = 'var(--accent)';
+                loadLeaderboard(btn.dataset.range);
+            });
+        });
+
+        // ============ API ============
+        async function apiCall(path, method = 'GET', body = null) {
+            const options = { method, headers: { 'Content-Type': 'application/json' } };
+            if (body) options.body = JSON.stringify(body);
+            const res = await fetch(API_BASE + path, options);
+            return res.json();
+        }
+
+        // ============ ИНИЦИАЛИЗАЦИЯ ПОЛЬЗОВАТЕЛЯ ============
+        async function initApp() {
+            try {
+                const initData = tg ? (tg.initData || '') : '';
+                const params = new URLSearchParams(window.location.search);
+                const startapp = params.get('startapp') || '';
+
+                const data = await apiCall('/api/init', 'POST', { initData, start_param: startapp });
+
+                if (data.error === 'banned') {
+                    document.body.innerHTML = `
+                        <div style="text-align:center;padding:60px 20px;">
+                            <div style="font-size:64px;margin-bottom:16px;">⛔</div>
+                            <h2 style="color:var(--red);">Доступ запрещён</h2>
+                            <p style="color:var(--text-secondary);margin-top:8px;">${data.message || 'Вы были забанены'}</p>
+                            <button class="btn-primary" style="margin-top:16px;" onclick="window.open('https://t.me/gmp_help','_blank')">Поддержка</button>
+                        </div>
+                    `;
+                    return;
+                }
+
+                if (data.guest) {
+                    appBalance = data.balance || 0;
+                    updateBalance();
+                    document.getElementById('profileName').textContent = 'Гость';
+                    document.getElementById('profileId').textContent = 'Не в Telegram';
+                    document.getElementById('refCode').textContent = '—';
+                    showToast(data.message || 'Открой через Telegram-бота');
+                    return;
+                }
+
+                currentUser = data;
+                appBalance = data.balance || 0;
+                isAdmin = data.is_admin || false;
+
+                updateBalance();
+                updateProfile(data);
+                loadDailyBonus();
+                loadStats();
+
+                if (isAdmin) {
+                    document.getElementById('adminBadge').innerHTML =
+                        `<span class="admin-badge">⚙️ Админ</span>`;
+                }
+
+                // Показываем админ-кнопку в меню
+                if (isAdmin && tg) {
+                    // Добавляем кнопку в меню бота через WebApp
+                }
+
+            } catch (e) {
+                console.error(e);
+                showToast('Ошибка загрузки');
+            }
+        }
+
+        function updateBalance() {
+            document.getElementById('balanceText').textContent = appBalance.toLocaleString('ru-RU');
+            document.getElementById('pBalance').textContent = appBalance.toLocaleString('ru-RU');
+        }
+
+        function updateProfile(data) {
+            const name = (data.first_name + ' ' + (data.last_name || '')).trim() || 'Игрок';
+            document.getElementById('profileName').textContent = name;
+            document.getElementById('profileId').textContent = `ID ${data.tg_id}`;
+            document.getElementById('refCode').textContent = data.ref_code || '—';
+
+            const avatarEl = document.getElementById('profileAvatar');
+            const headerAvatar = document.getElementById('avatarBtn');
+
+            if (data.photo_url) {
+                avatarEl.style.backgroundImage = `url(${data.photo_url})`;
+                avatarEl.style.backgroundSize = 'cover';
+                avatarEl.textContent = '';
+                headerAvatar.style.backgroundImage = `url(${data.photo_url})`;
+                headerAvatar.style.backgroundSize = 'cover';
+                headerAvatar.textContent = '';
+            } else {
+                const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+                avatarEl.textContent = initials;
+                headerAvatar.textContent = initials;
+            }
+        }
+
+        // ============ СТАТИСТИКА ============
+        async function loadStats() {
+            try {
+                const data = await apiCall('/api/stats');
+                document.getElementById('activeNow').textContent = data.active_now || 0;
+                document.getElementById('statWon').textContent = (data.won_today || 0).toLocaleString('ru-RU') + ' GMP';
+                document.getElementById('statPlayers').textContent = data.total_players || 0;
+            } catch (e) { console.error(e); }
+        }
+
+        // ============ ДЕЙЛИ БОНУС ============
+        async function loadDailyBonus() {
+            if (!currentUser) return;
+            try {
+                const data = await apiCall(`/api/state?user_id=${currentUser.user_id}`);
+                const btn = document.getElementById('dailyBtn');
+                const sub = document.getElementById('dailySub');
+                if (data.daily_bonus_ready) {
+                    btn.disabled = false;
+                    btn.textContent = '+2 GMP';
+                    sub.textContent = 'Доступно прямо сейчас';
+                } else {
+                    btn.disabled = true;
+                    btn.textContent = 'Получено';
+                    const remain = data.daily_bonus_next_at - Date.now();
+                    const h = Math.floor(remain / 3600000);
+                    const m = Math.floor((remain % 3600000) / 60000);
+                    sub.textContent = `Следующий через ${h}ч ${m}м`;
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        document.getElementById('dailyBtn').addEventListener('click', async () => {
+            if (!currentUser) { showToast('Авторизуйся через Telegram'); return; }
+            try {
+                const data = await apiCall('/api/daily-bonus', 'POST', { user_id: currentUser.user_id });
+                if (data.granted) {
+                    appBalance = data.balance;
+                    updateBalance();
+                    showToast(`🎁 +${data.amount} GMP получено!`);
+                    loadDailyBonus();
+                    loadStats();
+                } else {
+                    showToast('Бонус уже получен');
+                }
+            } catch (e) { showToast('Ошибка'); }
+        });
+
+        // ============ ЛИДЕРБОРД ============
+        async function loadLeaderboard(period) {
+            try {
+                const data = await apiCall(`/api/leaderboard?period=${period}`);
+                const container = document.getElementById('leaderList');
+                const items = data.items || [];
+                if (items.length === 0) {
+                    container.innerHTML = '<div class="list-item"><div class="info"><div class="name" style="color:var(--text-secondary);">Пока никто не выиграл</div></div></div>';
+                    return;
+                }
+                container.innerHTML = items.map((p, i) => `
+                    <div class="list-item">
+                        <span style="font-weight:700;font-size:14px;color:${i < 3 ? 'var(--gold)' : 'var(--text-muted)'};width:24px;text-align:center;">${i + 1}</span>
+                        <div class="avatar-sm" style="background:${['var(--gold)','var(--accent)','var(--green)','var(--bg-card)'][i] || 'var(--bg-card)'};color:#000;">${(p.first_name || '?')[0].toUpperCase()}</div>
+                        <div class="info"><div class="name">${p.first_name || 'Игрок'} ${p.last_name || ''}</div></div>
+                        <div class="value gold">${Math.round(p.net).toLocaleString('ru-RU')} GMP</div>
+                    </div>
+                `).join('');
+            } catch (e) { console.error(e); }
+        }
+
+        // ============ ИСТОРИЯ ============
+        async function loadHistory() {
+            if (!currentUser) { document.getElementById('historyList').innerHTML =
+                    '<div class="list-item"><div class="info"><div class="name" style="color:var(--text-secondary);">Авторизуйся через Telegram</div></div></div>'; return; }
+            try {
+                const data = await apiCall(`/api/history?user_id=${currentUser.user_id}&limit=30`);
+                const items = data.items || [];
+                const container = document.getElementById('historyList');
+                if (items.length === 0) {
+                    container.innerHTML =
+                        '<div class="list-item"><div class="info"><div class="name" style="color:var(--text-secondary);">Нет игр</div></div></div>';
+                    return;
+                }
+                container.innerHTML = items.map(h => {
+                    const isWin = h.result === 'win';
+                    const date = new Date(h.created_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit',
+                        hour: '2-digit', minute: '2-digit' });
+                    return `
+                        <div class="list-item">
+                            <div style="font-size:20px;">${isWin ? '✅' : '❌'}</div>
+                            <div class="info">
+                                <div class="name">${h.game === 'crash' ? 'Краш' : h.game} · ×${h.multiplier.toFixed(2)}</div>
+                                <div class="sub">${date} · ставка ${h.bet_amount} GMP</div>
+                            </div>
+                            <div class="value ${isWin ? '' : 'loss'}">${isWin ? '+' : '-'}${isWin ? h.win_amount : h.bet_amount} GMP</div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (e) { console.error(e); }
+        }
+
+        // ============ РЕФЕРАЛЫ ============
+        async function loadReferrals() {
+            if (!currentUser) return;
+            try {
+                const data = await apiCall(`/api/referrals?user_id=${currentUser.user_id}`);
+                document.getElementById('refCount').textContent = data.count || 0;
+                document.getElementById('refEarned').textContent = (data.total_earned || 0).toFixed(2);
+
+                const container = document.getElementById('friendsList');
+                const friends = data.friends || [];
+                if (friends.length === 0) {
+                    container.innerHTML =
+                        '<div class="list-item"><div class="info"><div class="name" style="color:var(--text-secondary);">Пока нет друзей</div></div></div>';
+                    return;
+                }
+                container.innerHTML = friends.map(f => `
+                    <div class="list-item">
+                        <div class="avatar-sm" style="background:var(--bg-card);">${(f.first_name || '?')[0].toUpperCase()}</div>
+                        <div class="info">
+                            <div class="name">${f.first_name || 'Игрок'} ${f.last_name || ''}</div>
+                            <div class="sub">Проиграл(а) ${f.lost_amount} GMP</div>
+                        </div>
+                        <div class="value gold">+${f.earned.toFixed(2)} GMP</div>
+                    </div>
+                `).join('');
+            } catch (e) { console.error(e); }
+        }
+
+        // ============ ПРОФИЛЬ СТАТС ============
+        async function loadProfileStats() {
+            if (!currentUser) return;
+            try {
+                const data = await apiCall(`/api/profile-stats?user_id=${currentUser.user_id}`);
+                document.getElementById('pBets').textContent = data.bets_count || 0;
+                document.getElementById('pWon').textContent = (data.total_won || 0).toLocaleString('ru-RU');
+            } catch (e) { console.error(e); }
+        }
+
+        // ============ ВЫВОД ============
+        async function openWithdraw() {
+            if (!currentUser) { showToast('Авторизуйся через Telegram'); return; }
+            try {
+                const data = await apiCall(`/api/state?user_id=${currentUser.user_id}`);
+                document.getElementById('withdrawInfo').textContent = `Доступно: ${data.balance.toLocaleString('ru-RU')} GMP`;
+                document.getElementById('withdrawSheet').classList.add('active');
+            } catch (e) { showToast('Ошибка'); }
+        }
+
+        function openDeposit() {
+            document.getElementById('depositSheet').classList.add('active');
+        }
+
+        function closeSheet(id) {
+            document.getElementById(id).classList.remove('active');
+        }
+
+        async function confirmWithdraw() {
+            const input = document.getElementById('withdrawInput');
+            const amount = parseInt(input.value);
+            if (!amount || amount < 10) { showToast('Минимальная сумма 10 GMP'); return; }
+            try {
+                const data = await apiCall('/api/withdraw/create', 'POST', {
+                    user_id: currentUser.user_id,
+                    amount: amount
+                });
+                if (data.error) { showToast(data.error); return; }
+                appBalance = data.balance;
+                updateBalance();
+                closeSheet('withdrawSheet');
+                showToast(`✅ Заявка на ${amount} GMP отправлена`);
+                input.value = '';
+                loadProfileStats();
+            } catch (e) { showToast('Ошибка'); }
+        }
+
+        // ============ КРАШ ============
+        function openCrash() {
+            if (!currentUser) { showToast('Авторизуйся через Telegram'); return; }
+            document.getElementById('crashView').classList.add('active');
+            document.body.style.overflow = 'hidden';
+            startCrashPolling();
+        }
+
+        function closeCrash() {
+            document.getElementById('crashView').classList.remove('active');
+            document.body.style.overflow = '';
+            if (crashInterval) clearInterval(crashInterval);
+        }
+
+        function startCrashPolling() {
+            fetchCrashState();
+            if (crashInterval) clearInterval(crashInterval);
+            crashInterval = setInterval(fetchCrashState, 800);
+        }
+
+        async function fetchCrashState() {
+            try {
+                const url = `/api/crash/state${currentUser ? '?user_id=' + currentUser.user_id : ''}`;
+                const data = await apiCall(url);
+                crashData = data;
+                updateCrashUI(data);
+            } catch (e) { console.error(e); }
+        }
+
+        function updateCrashUI(data) {
+            const multiplier = data.multiplier || 1.00;
+            document.getElementById('crashMultiplier').textContent = multiplier.toFixed(2) + '×';
+            document.getElementById('crashMultiplier').style.color = data.phase === 'crashed' ? 'var(--red)' : 'var(--green)';
+
+            const statusMap = {
+                'betting': '⏳ Приём ставок',
+                'playing': '🚀 В полёте',
+                'crashed': '💥 Краш!'
+            };
+            document.getElementById('crashStatus').textContent = statusMap[data.phase] || 'Ожидание...';
+            document.getElementById('crashPlayers').textContent = data.total_players || 0;
+            document.getElementById('crashBets').textContent = data.total_bets || 0;
+
+            // История
+            const history = data.history || [];
+            const hContainer = document.getElementById('crashHistory');
+            hContainer.innerHTML = history.map(p =>
+                `<span style="padding:4px 10px;border-radius:6px;background:var(--bg-card);border:1px solid var(--border);font-size:12px;font-weight:600;color:${p < 2 ? 'var(--red)' : p < 5 ? 'var(--yellow)' : 'var(--green)'};">${p.toFixed(2)}×</span>`
+            ).join('');
+
+            // Мои ставки
+            const myBets = data.my_bets || [];
+            const container = document.getElementById('crashMyBets');
+            if (myBets.length === 0) {
+                container.innerHTML = '';
+                document.getElementById('crashBetBtn').disabled = false;
+                document.getElementById('crashBetBtn').textContent = '🚀 Сделать ставку';
+                return;
+            }
+
+            const activeBet = myBets.find(b => b.status === 'active');
+            if (activeBet) {
+                const currentWin = (activeBet.amount * multiplier).toFixed(2);
+                container.innerHTML = `
+                    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-top:8px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <div style="font-weight:600;">Ставка ${activeBet.amount} GMP</div>
+                                <div style="font-size:12px;color:var(--text-secondary);">${activeBet.auto_cashout ? `Авто ${activeBet.auto_cashout}×` : 'Ручной вывод'}</div>
+                            </div>
+                            ${data.phase === 'playing' ? `
+                                <button class="btn-primary" style="padding:8px 16px;font-size:13px;" onclick="cashoutCrash(${activeBet.bet_id})">
+                                    Забрать ${currentWin} GMP
+                                </button>
+                            ` : data.phase === 'crashed' ? `
+                                <span style="color:var(--red);font-weight:700;">💥 Проигрыш</span>
+                            ` : `
+                                <span style="color:var(--text-secondary);">Ожидание...</span>
+                            `}
+                        </div>
+                    </div>
+                `;
+                document.getElementById('crashBetBtn').disabled = true;
+                document.getElementById('crashBetBtn').textContent = '⏳ Ставка сделана';
+            } else {
+                container.innerHTML = '';
+                document.getElementById('crashBetBtn').disabled = false;
+                document.getElementById('crashBetBtn').textContent = '🚀 Сделать ставку';
+            }
+
+            // Кнопка ставки
+            if (data.phase !== 'betting') {
+                document.getElementById('crashBetBtn').disabled = true;
+                document.getElementById('crashBetBtn').textContent = data.phase === 'playing' ? '⏳ Идёт раунд' : '💥 Ожидание...';
+            }
+        }
+
+        function adjustBet(factor) {
+            const input = document.getElementById('crashBetAmount');
+            const val = parseFloat(input.value) || 10;
+            input.value = Math.max(1, Math.round(val * factor));
+        }
+
+        function setBet(amount) {
+            const input = document.getElementById('crashBetAmount');
+            if (amount === 'max') {
+                input.value = Math.floor(appBalance);
+            } else {
+                input.value = amount;
+            }
+        }
+
+        async function placeCrashBet() {
+            if (!currentUser) { showToast('Авторизуйся'); return; }
+            const amount = parseInt(document.getElementById('crashBetAmount').value);
+            if (!amount || amount < 1) { showToast('Минимальная ставка 1 GMP'); return; }
+            if (amount > appBalance) { showToast('Недостаточно средств'); return; }
+
+            const autoCashout = document.getElementById('crashAutoCashout').checked ?
+                parseFloat(document.getElementById('crashAutoValue').value) : null;
+            if (autoCashout && autoCashout <= 1) { showToast('Автовывод должен быть > 1.00×'); return; }
+
+            try {
+                const data = await apiCall('/api/crash/bet', 'POST', {
+                    user_id: currentUser.user_id,
+                    amount: amount,
+                    auto_cashout: autoCashout
+                });
+                if (data.error) { showToast(data.error); return; }
+                appBalance = data.balance;
+                updateBalance();
+                showToast(`Ставка ${amount} GMP принята`);
+                fetchCrashState();
+            } catch (e) { showToast('Ошибка'); }
+        }
+
+        async function cashoutCrash(betId) {
+            try {
+                const data = await apiCall('/api/crash/cashout', 'POST', {
+                    user_id: currentUser.user_id,
+                    bet_id: betId
+                });
+                if (data.error) { showToast(data.error); return; }
+                appBalance = data.balance;
+                updateBalance();
+                showToast(`🎉 Забрано ${data.win_amount.toFixed(2)} GMP на ×${data.multiplier.toFixed(2)}`);
+                fetchCrashState();
+            } catch (e) { showToast('Ошибка'); }
+        }
+
+        // ============ РЕФЕРАЛЬНЫЙ КОД ============
+        document.getElementById('copyBtn').addEventListener('click', () => {
+            const code = document.getElementById('refCode').textContent;
+            if (navigator.clipboard) navigator.clipboard.writeText(code);
+            showToast('Код скопирован');
+        });
+
+        document.getElementById('shareBtn').addEventListener('click', () => {
+            const code = document.getElementById('refCode').textContent;
+            const url = `https://t.me/gmplayrobot/app?startapp=${code}`;
+            if (tg && tg.openTelegramLink) {
+                tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(url)}&text=Присоединяйся к GMPLAY!`);
+            } else if (navigator.share) {
+                navigator.share({ title: 'GMPLAY', text: 'Присоединяйся к GMPLAY!', url });
+            } else {
+                if (navigator.clipboard) navigator.clipboard.writeText(url);
+                showToast('Ссылка скопирована');
+            }
+        });
+
+        // ============ TOAST ============
+        let toastTimer;
+
+        function showToast(text) {
+            const el = document.getElementById('toast');
+            el.textContent = text;
+            el.classList.add('show');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+        }
+
+        // ============ ЗАПУСК ============
+        initApp();
+
+        // Автообновление
+        setInterval(() => {
+            if (document.getElementById('screen-home').classList.contains('active')) loadStats();
+            if (document.getElementById('screen-profile').classList.contains('active')) loadProfileStats();
+        }, 30000);
+    </script>
+</body>
+</html>
