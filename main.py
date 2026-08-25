@@ -10,11 +10,6 @@ import threading
 import asyncio
 import logging
 from datetime import datetime
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.filters import Command
 
 # ==================== КОНФИГУРАЦИЯ ====================
 
@@ -36,16 +31,6 @@ WITHDRAW_WEEK_MS = 7 * 24 * 60 * 60 * 1000
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# ==================== FLASK APP ====================
-
-app = Flask(__name__)
-CORS(app)
-
-# ==================== AIOGRAM BOT ====================
-
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
 
 # ==================== JSON-БАЗА ДАННЫХ ====================
 
@@ -169,134 +154,155 @@ def ref_code_for(tg_id):
     return "GM" + format(int(tg_id), "x").upper()
 
 
-# ==================== BOT HANDLERS ====================
+# ==================== BOT HANDLERS (будет загружено позже) ====================
 
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    try:
-        if is_user_banned(message.from_user.id):
-            await message.answer(
-                "⛔ <b>Доступ запрещён</b>\n\n"
-                "Вы были забанены. Обратитесь в поддержку.",
-                parse_mode="HTML"
-            )
-            return
+bot = None
+dp = None
 
-        start_param = None
-        if " " in message.text:
-            start_param = message.text.split(" ", 1)[1]
 
-        tg_user = {
-            "id": message.from_user.id,
-            "first_name": message.from_user.first_name,
-            "last_name": message.from_user.last_name or "",
-            "username": message.from_user.username or "",
-        }
+def init_bot():
+    """Инициализация бота (вызывается в главном потоке)"""
+    global bot, dp
+    from aiogram import Bot, Dispatcher, types
+    from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
+    from aiogram.filters import Command
 
-        user, is_new = get_or_create_user(tg_user, start_param)
-        logger.info(f"Пользователь {message.from_user.id} запустил бота. Новый: {is_new}")
+    bot = Bot(token=BOT_TOKEN)
+    dp = Dispatcher()
 
-        webapp_url = WEBAPP_URL
-        if user:
-            webapp_url += f"?startapp={ref_code_for(user['tg_id'])}"
-
-        is_admin_user = is_admin(message.from_user.id)
-
-        keyboard = [
-            [InlineKeyboardButton(
-                text="🎮 Играть в GMPLAY",
-                web_app=WebAppInfo(url=webapp_url)
-            )]
-        ]
-
-        if is_admin_user:
-            keyboard.append([
-                InlineKeyboardButton(
-                    text="⚙️ Админ-панель",
-                    web_app=WebAppInfo(url=f"{WEBAPP_URL}/admin.html")
+    @dp.message(Command("start"))
+    async def cmd_start(message: types.Message):
+        try:
+            if is_user_banned(message.from_user.id):
+                await message.answer(
+                    "⛔ <b>Доступ запрещён</b>\n\n"
+                    "Вы были забанены. Обратитесь в поддержку.",
+                    parse_mode="HTML"
                 )
+                return
+
+            start_param = None
+            if " " in message.text:
+                start_param = message.text.split(" ", 1)[1]
+
+            tg_user = {
+                "id": message.from_user.id,
+                "first_name": message.from_user.first_name,
+                "last_name": message.from_user.last_name or "",
+                "username": message.from_user.username or "",
+            }
+
+            user, is_new = get_or_create_user(tg_user, start_param)
+            logger.info(f"Пользователь {message.from_user.id} запустил бота. Новый: {is_new}")
+
+            webapp_url = WEBAPP_URL
+            if user:
+                webapp_url += f"?startapp={ref_code_for(user['tg_id'])}"
+
+            is_admin_user = is_admin(message.from_user.id)
+
+            keyboard = [
+                [InlineKeyboardButton(
+                    text="🎮 Играть в GMPLAY",
+                    web_app=WebAppInfo(url=webapp_url)
+                )]
+            ]
+
+            if is_admin_user:
+                keyboard.append([
+                    InlineKeyboardButton(
+                        text="⚙️ Админ-панель",
+                        web_app=WebAppInfo(url=f"{WEBAPP_URL}/admin.html")
+                    )
+                ])
+
+            keyboard.append([
+                InlineKeyboardButton(text="📢 Канал", url="https://t.me/gmplay_news"),
+                InlineKeyboardButton(text="🛟 Поддержка", url="https://t.me/gmp_help")
             ])
 
-        keyboard.append([
-            InlineKeyboardButton(text="📢 Канал", url="https://t.me/gmplay_news"),
-            InlineKeyboardButton(text="🛟 Поддержка", url="https://t.me/gmp_help")
+            reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+            welcome_text = (
+                "🚀 <b>Добро пожаловать в GMPLAY!</b>\n\n"
+                "🎮 <b>Твоя победа начинается здесь!</b>\n\n"
+                "⚡ Играй в <b>Краш</b> — забирай выигрыш до того, как ракета улетит!\n"
+                "💰 Получай ежедневный бонус\n"
+                "👥 Приглашай друзей и зарабатывай 1% от их проигрышей\n"
+                "💸 Выводи средства в любой момент\n\n"
+                "👇 <b>Нажми на кнопку ниже, чтобы начать!</b>"
+            )
+
+            await message.answer(welcome_text, parse_mode="HTML", reply_markup=reply_markup)
+
+        except Exception as e:
+            logger.error(f"Ошибка в /start: {e}")
+            await message.answer("❌ Произошла ошибка. Попробуйте позже.")
+
+    @dp.message(Command("admin"))
+    async def cmd_admin(message: types.Message):
+        if not is_admin(message.from_user.id):
+            await message.answer("⛔ У вас нет доступа к этой команде.")
+            return
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="⚙️ Открыть админ-панель",
+                web_app=WebAppInfo(url=f"{WEBAPP_URL}/admin.html")
+            )]
         ])
 
-        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-        welcome_text = (
-            "🚀 <b>Добро пожаловать в GMPLAY!</b>\n\n"
-            "🎮 <b>Твоя победа начинается здесь!</b>\n\n"
-            "⚡ Играй в <b>Краш</b> — забирай выигрыш до того, как ракета улетит!\n"
-            "💰 Получай ежедневный бонус\n"
-            "👥 Приглашай друзей и зарабатывай 1% от их проигрышей\n"
-            "💸 Выводи средства в любой момент\n\n"
-            "👇 <b>Нажми на кнопку ниже, чтобы начать!</b>"
+        await message.answer(
+            "👋 <b>Добро пожаловать в админ-панель!</b>\n\n"
+            "Здесь вы можете управлять пользователями, заявками на вывод и депозиты.",
+            parse_mode="HTML",
+            reply_markup=keyboard
         )
 
-        await message.answer(welcome_text, parse_mode="HTML", reply_markup=reply_markup)
+    @dp.message(Command("help"))
+    async def cmd_help(message: types.Message):
+        await message.answer(
+            "🤖 <b>Помощь по GMPLAY</b>\n\n"
+            "/start — запустить бота\n"
+            "/help — эта справка\n"
+            "/admin — админ-панель (только для администраторов)\n\n"
+            "По всем вопросам: @gmp_help",
+            parse_mode="HTML"
+        )
 
-    except Exception as e:
-        logger.error(f"Ошибка в /start: {e}")
-        await message.answer("❌ Произошла ошибка. Попробуйте позже.")
+    @dp.message(Command("me"))
+    async def cmd_me(message: types.Message):
+        user = get_user(message.from_user.id)
+        if not user:
+            await message.answer("❌ Пользователь не найден. Напишите /start")
+            return
 
+        await message.answer(
+            f"👤 <b>Ваш профиль</b>\n\n"
+            f"🆔 ID: <code>{user['tg_id']}</code>\n"
+            f"💰 Баланс: <b>{user['balance']} GMP</b>\n"
+            f"🔗 Реферальный код: <code>{ref_code_for(user['tg_id'])}</code>\n\n"
+            f"Приглашайте друзей и получайте 1% от их проигрышей!",
+            parse_mode="HTML"
+        )
 
-@dp.message(Command("admin"))
-async def cmd_admin(message: types.Message):
-    if not is_admin(message.from_user.id):
-        await message.answer("⛔ У вас нет доступа к этой команде.")
-        return
+    @dp.message()
+    async def echo(message: types.Message):
+        await message.answer(
+            "👋 Напишите /start, чтобы начать игру в GMPLAY!\n"
+            "Или /help для справки."
+        )
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text="⚙️ Открыть админ-панель",
-            web_app=WebAppInfo(url=f"{WEBAPP_URL}/admin.html")
-        )]
-    ])
-
-    await message.answer(
-        "👋 <b>Добро пожаловать в админ-панель!</b>\n\n"
-        "Здесь вы можете управлять пользователями, заявками на вывод и депозиты.",
-        parse_mode="HTML",
-        reply_markup=keyboard
-    )
-
-
-@dp.message(Command("help"))
-async def cmd_help(message: types.Message):
-    await message.answer(
-        "🤖 <b>Помощь по GMPLAY</b>\n\n"
-        "/start — запустить бота\n"
-        "/help — эта справка\n"
-        "/admin — админ-панель (только для администраторов)\n\n"
-        "По всем вопросам: @gmp_help",
-        parse_mode="HTML"
-    )
+    return bot, dp
 
 
-@dp.message(Command("me"))
-async def cmd_me(message: types.Message):
-    user = get_user(message.from_user.id)
-    if not user:
-        await message.answer("❌ Пользователь не найден. Напишите /start")
-        return
+# ==================== FLASK APP ====================
 
-    await message.answer(
-        f"👤 <b>Ваш профиль</b>\n\n"
-        f"🆔 ID: <code>{user['tg_id']}</code>\n"
-        f"💰 Баланс: <b>{user['balance']} GMP</b>\n"
-        f"🔗 Реферальный код: <code>{ref_code_for(user['tg_id'])}</code>\n\n"
-        f"Приглашайте друзей и получайте 1% от их проигрышей!",
-        parse_mode="HTML"
-    )
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 
-
-@dp.message()
-async def echo(message: types.Message):
-    await message.answer(
-        "👋 Напишите /start, чтобы начать игру в GMPLAY!\n"
-        "Или /help для справки."
-    )
+app = Flask(__name__)
+CORS(app)
 
 
 # ==================== API ROUTES ====================
@@ -323,7 +329,7 @@ def api_init():
             "message": "Открой приложение через Telegram-бота",
         })
 
-    # Проверка подписи initData (упрощённо)
+    # Проверка подписи initData
     try:
         import urllib.parse
         import hashlib
@@ -657,7 +663,6 @@ def api_withdraw_requests():
 def api_crash_state():
     user_id = request.args.get('user_id', type=int)
 
-    # Базовая заглушка для краша
     return jsonify({
         "phase": "betting",
         "round_id": 1,
@@ -726,7 +731,7 @@ def api_crash_cashout():
         if not user:
             return jsonify({"error": "user_not_found"}), 404
 
-        win_amount = 50  # Тестовое значение
+        win_amount = 50
         user["balance"] += win_amount
         _save_db(db)
 
@@ -884,7 +889,6 @@ def api_admin_withdraw_reject():
                 r["reject_reason"] = reason
                 r["processed_at"] = int(time.time() * 1000)
 
-                # Возвращаем баланс
                 user = get_user_by_id(r["user_id"])
                 if user:
                     key = str(user["tg_id"])
@@ -965,23 +969,30 @@ def health():
 
 # ==================== ЗАПУСК ====================
 
-async def start_bot():
-    """Запуск бота в отдельном потоке"""
-    logger.info("🚀 Запуск бота...")
-
-    # Удаляем вебхук
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("✅ Вебхук удалён")
-    except Exception as e:
-        logger.error(f"❌ Ошибка удаления вебхука: {e}")
-
-    await dp.start_polling(bot)
-
-
 def run_bot():
-    """Запуск бота в отдельном потоке"""
-    asyncio.run(start_bot())
+    """Запуск бота в отдельном потоке с собственным event loop"""
+    try:
+        # Создаём новый event loop для этого потока
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        # Инициализируем бота
+        init_bot()
+        global bot, dp
+
+        async def start_bot():
+            logger.info("🚀 Запуск бота...")
+            try:
+                await bot.delete_webhook(drop_pending_updates=True)
+                logger.info("✅ Вебхук удалён")
+            except Exception as e:
+                logger.error(f"❌ Ошибка удаления вебхука: {e}")
+
+            await dp.start_polling(bot)
+
+        loop.run_until_complete(start_bot())
+    except Exception as e:
+        logger.error(f"❌ Ошибка в боте: {e}")
 
 
 if __name__ == "__main__":
@@ -990,11 +1001,14 @@ if __name__ == "__main__":
     logger.info(f"📁 База данных: {DB_PATH}")
     logger.info(f"🌐 WebApp URL: {WEBAPP_URL}")
 
-    # Запускаем бота в отдельном потоке
+    # Инициализируем бота (но не запускаем)
+    init_bot()
+
+    # Запускаем бота в отдельном потоке с правильным event loop
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
 
-    # Запускаем Flask (API)
+    # Запускаем Flask (API) в главном потоке
     port = int(os.getenv('PORT', 3000))
     logger.info(f"✅ API сервер запущен на порту {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
