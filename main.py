@@ -5,6 +5,7 @@ import logging
 import asyncio
 import re
 import datetime
+import aiohttp
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.filters import Command, CommandObject
@@ -23,6 +24,11 @@ START_BALANCE = 0
 WIN_CHANCE = 0.35  # 35% шанс выигрыша для всех игр
 MAX_CRASH_BET = 10000000  # Максимальная ставка в краше (10кк)
 MAX_CRASH_MULTIPLIER = 100  # Максимальный множитель
+REFERRAL_REWARD = 1  # Награда за реферала
+DAILY_BONUS = 3  # Ежедневный бонус
+MIN_DEPOSIT_TO_WITHDRAW = 5
+API_GMINES_URL = "https://api.gmines.fun/me"
+API_GMINES_AUTH = "Bearer user=%7B%22id%22%3A8894401294%2C%22first_name%22%3A%22DeathGmp%22%2C%22last_name%22%3A%22%22%2C%22username%22%3A%22DeathGmp%22%2C%22language_code%22%3A%22ru%22%2C%22allows_write_to_pm%22%3Atrue%2C%22photo_url%22%3A%22https%3A%5C%2F%5C%2Ft.me%5C%2Fi%5C%2Fuserpic%5C%2F320%5C%2FK_dvsi7_gqaGDk-82FZ6gbkGGZTfglM6vkQZjibFD8EtHID_GxNt2ur1FIwAXdjY.svg%22%7D&chat_instance=5078861315756175081&chat_type=sender&auth_date=1787776518&signature=O_wEfNOjhpxDUrkS9nXVUeHHWtVAIv9susDvrZmmpujh0WrildMn1ZnGw2TKV8s_P5A1U7FzgPzenyNN8bZmBg&hash=78fcfc5e6d2de8a6917d52d4a83ace3150c8caf43bb64b2f43fdf309239646b4"
 
 logging.basicConfig(level=logging.INFO)
 
@@ -432,12 +438,12 @@ class DiceGame:
     def __init__(self, db):
         self.db = db
         self.multipliers = {
-            'number': 5.8,
-            'even': 1.94,
-            'odd': 1.94,
-            'equal': 5.8,
-            'over': 1.94,
-            'under': 2.9
+            'number': 6,
+            'even': 2,
+            'odd': 2,
+            'equal': 6,
+            'over': 2,
+            'under': 3
         }
     
     async def play(self, msg, uid, bet, bet_type, value=None):
@@ -1446,7 +1452,7 @@ class Blackjack:
         game = self.games[uid]
         
         if result == 'blackjack':
-            win_amount = int(game['bet'] * 1.94)
+            win_amount = int(game['bet'] * 2)
             new_bal = game['bal'] + win_amount + game['bet']
             self.db.update(uid, balance=new_bal,
                           games_played=self.db.get(uid).get('games_played', 0) + 1,
@@ -1462,7 +1468,7 @@ class Blackjack:
             dealer_value = game['dealer_value']
             
             if dealer_value > 21:
-                final_win = game['bet'] * 1.94
+                final_win = game['bet'] * 2
                 new_bal = game['bal'] + int(final_win)
                 self.db.update(uid, balance=new_bal,
                               games_played=self.db.get(uid).get('games_played', 0) + 1,
@@ -1470,7 +1476,7 @@ class Blackjack:
                 msg = f"🎉 Дилер перебрал! +{fmt(int(final_win))}"
                 
             elif player_value > dealer_value:
-                final_win = game['bet'] * 1.94
+                final_win = game['bet'] * 2
                 new_bal = game['bal'] + int(final_win)
                 self.db.update(uid, balance=new_bal,
                               games_played=self.db.get(uid).get('games_played', 0) + 1,
@@ -1508,10 +1514,172 @@ class Blackjack:
         del self.games[uid]
         return result_data
 
+
+class ReferralDB:
+    def __init__(self):
+        self.db = DB("referrals.json")
+        self._ensure()
+    
+    def _ensure(self):
+        data = self.db.read()
+        if not data:
+            data = {
+                "users": {},
+                "referral_count": {}
+            }
+            self.db.write(data)
+    
+    def get(self, uid):
+        data = self.db.read()
+        uid = str(uid)
+        if uid not in data["users"]:
+            data["users"][uid] = {
+                "referrer": None,
+                "referrals": [],
+                "earned": 0,
+                "last_bonus": None
+            }
+            self.db.write(data)
+        return data["users"][uid]
+    
+    def update(self, uid, **kwargs):
+        data = self.db.read()
+        uid = str(uid)
+        if uid not in data["users"]:
+            data["users"][uid] = self.get(uid)
+        data["users"][uid].update(kwargs)
+        self.db.write(data)
+    
+    def get_referral_code(self, uid):
+        import base64
+        code = base64.b64encode(str(uid).encode()).decode()[:8]
+        return code
+    
+    def get_referral_link(self, uid):
+        code = self.get_referral_code(uid)
+        return f"https://t.me/DeathGmpBot?start=ref_{code}"
+    
+    def get_by_code(self, code):
+        import base64
+        try:
+            uid = int(base64.b64decode(code.encode()).decode())
+            return uid
+        except:
+            return None
+    
+    def add_referral(self, referrer_id, new_user_id):
+        data = self.db.read()
+        referrer_id = str(referrer_id)
+        new_user_id = str(new_user_id)
+        
+        if referrer_id == new_user_id:
+            return {'ok': False, 'msg': '❌ Нельзя пригласить себя'}
+        
+        if new_user_id in data["users"].get(referrer_id, {}).get("referrals", []):
+            return {'ok': False, 'msg': '❌ Уже приглашён'}
+        
+        if referrer_id not in data["users"]:
+            data["users"][referrer_id] = {
+                "referrer": None,
+                "referrals": [],
+                "earned": 0,
+                "last_bonus": None
+            }
+        
+        data["users"][referrer_id]["referrals"].append(new_user_id)
+        data["users"][referrer_id]["earned"] += REFERRAL_REWARD
+        
+        if new_user_id not in data["users"]:
+            data["users"][new_user_id] = {
+                "referrer": referrer_id,
+                "referrals": [],
+                "earned": 0,
+                "last_bonus": None
+            }
+        else:
+            data["users"][new_user_id]["referrer"] = referrer_id
+        
+        self.db.write(data)
+        
+        user = core.db.get(int(referrer_id))
+        core.db.update(int(referrer_id), balance=user['balance'] + REFERRAL_REWARD)
+        
+        return {'ok': True, 'msg': f'✅ +{REFERRAL_REWARD} {CURRENCY} за реферала'}
+    
+    def can_claim_bonus(self, uid):
+        user_data = self.get(uid)
+        last_bonus = user_data.get('last_bonus')
+        
+        if not last_bonus:
+            return True
+        
+        try:
+            last_time = datetime.datetime.fromisoformat(last_bonus)
+            now = datetime.datetime.now()
+            
+            msk = datetime.timezone(datetime.timedelta(hours=3))
+            now_msk = datetime.datetime.now(msk)
+            today_msk = now_msk.date()
+            
+            last_msk = last_time.astimezone(msk)
+            last_date = last_msk.date()
+            
+            return today_msk > last_date
+        except:
+            return True
+    
+    def claim_bonus(self, uid):
+        if not self.can_claim_bonus(uid):
+            return {'ok': False, 'msg': '⏰ Бонус уже получен сегодня!'}
+        
+        user = core.db.get(uid)
+        core.db.update(uid, balance=user['balance'] + DAILY_BONUS)
+        
+        self.update(uid, last_bonus=datetime.datetime.now().isoformat())
+        
+        return {
+            'ok': True,
+            'bonus': DAILY_BONUS,
+            'balance': user['balance'] + DAILY_BONUS,
+            'msg': f'🎁 ЕЖЕДНЕВНЫЙ БОНУС!\n✅ +{DAILY_BONUS} {CURRENCY}\n💰 Баланс: {fmt(user["balance"] + DAILY_BONUS)} {CURRENCY}'
+        }
+    
+    def get_stats(self, uid):
+        user_data = self.get(uid)
+        return {
+            'referrals_count': len(user_data.get('referrals', [])),
+            'earned': user_data.get('earned', 0),
+            'referrer': user_data.get('referrer'),
+            'can_claim_bonus': self.can_claim_bonus(uid)
+        }
+
+async def get_gmines_balance():
+    """Получает баланс GMP из API gmines.fun"""
+    headers = {
+        "Authorization": API_GMINES_AUTH,
+        "Accept": "application/json, text/plain, */*",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+        "Origin": "https://app.gmines.fun",
+        "Sec-Fetch-Site": "same-site",
+        "Sec-Fetch-Mode": "cors"
+    }
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(API_GMINES_URL, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return {"ok": True, "gmp": data.get("gmp", 0), "data": data}
+                else:
+                    return {"ok": False, "msg": f"Ошибка API: {response.status}"}
+    except Exception as e:
+        return {"ok": False, "msg": f"Ошибка запроса: {str(e)}"}
+
 # ===================== ОСНОВНОЙ КЛАСС =====================
 class BotCore:
     def __init__(self):
         self.db = UserDB()
+        self.referral = ReferralDB()
         self.blackjack = Blackjack(self.db)
         self.crash = CrashGame(self.db)
         self.mines = Mines(self.db)
@@ -1534,15 +1702,15 @@ class BotCore:
             return 0
         text = text.lower().strip()
         if text in ['всё', 'все'] and bal is not None:
-            return bal
-        if text in ['пол', 'половина'] and bal is not None:  # <-- ДОБАВИТЬ ЭТО
-            return bal // 2
+            return int(bal)
+        if text in ['пол', 'половина'] and bal is not None:
+            return int(bal) // 2
         m = re.match(r'^(\d+(?:\.\d+)?)(к+)$', text)
         if m:
             n, k = float(m[1]), len(m[2])
             return int(n * [1000, 1000000, 1000000000][min(k - 1, 2)])
         try:
-            return int(text)
+            return int(float(text))
         except:
             return 0
     
@@ -1705,6 +1873,19 @@ async def cmd_start(msg: Message):
     uid = msg.from_user.id
     user = core.db.get(uid)
     
+    # Проверяем реферальный код в аргументах
+    if msg.text and msg.text.startswith('/start ref_'):
+        code = msg.text[10:].strip()
+        referrer_id = core.referral.get_by_code(code)
+        
+        if referrer_id and referrer_id != uid:
+            # Проверяем, не зарегистрирован ли уже пользователь
+            data = core.referral.db.read()
+            if str(uid) not in data["users"]:
+                result = core.referral.add_referral(referrer_id, uid)
+                if result['ok']:
+                    await msg.reply(result['msg'])
+    
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🚀 Краш", callback_data="menu_crash"),
          InlineKeyboardButton(text="💣 Мины", callback_data="menu_mines")],
@@ -1752,6 +1933,25 @@ async def cmd_top_deposits(msg: Message):
 async def handle_text(msg: Message, state: FSMContext):
     text = msg.text.lower().strip()
     uid = msg.from_user.id
+
+    if text == 'реф' or text == 'ref':
+        link = core.referral.get_referral_link(uid)
+        stats = core.referral.get_stats(uid)
+        await msg.reply(
+        f"🔗 ВАША РЕФЕРАЛЬНАЯ ССЫЛКА\n\n"
+        f"{link}\n\n"
+        f"👥 Приглашено: {stats['referrals_count']}\n"
+        f"💰 Заработано: {fmt(stats['earned'])} {CURRENCY}\n"
+        f"🎁 За каждого реферала: +{REFERRAL_REWARD} {CURRENCY}"
+        )
+        return
+
+    if text == 'бонус':
+        result = core.referral.claim_bonus(uid)
+        await msg.reply(result['msg'])
+        return
+
+
     
     # ===== ОТМЕНА =====
     if text == 'отмена' or text == 'cancel':
@@ -1810,6 +2010,16 @@ async def handle_text(msg: Message, state: FSMContext):
         if user['balance'] < amount:
             await msg.reply(f"❌ Не хватает средств. Баланс: {fmt(user['balance'])} {CURRENCY}")
             return
+    
+        total_deposited = user.get('total_deposited', 0)
+        if total_deposited < MIN_DEPOSIT_TO_WITHDRAW:
+            await msg.reply(
+                f"❌ Для вывода средств необходимо пополнить баланс минимум на {MIN_DEPOSIT_TO_WITHDRAW} {CURRENCY}\n\n"
+                f"📥 Ваш текущий депозит: {fmt(total_deposited)} {CURRENCY}\n"
+                f"💳 Пополните баланс и повторите попытку."
+            )
+            return
+    
         await state.update_data(withdraw_amount=amount)
         await state.set_state(WithdrawStates.waiting_address)
         await msg.reply(
@@ -1914,9 +2124,23 @@ async def handle_text(msg: Message, state: FSMContext):
                 await msg.reply(f"❌ Неверная сумма. Пример: депозит 1000")
                 return
         
-            await state.update_data(deposit_amount=amount)
-            await state.set_state(DepositStates.waiting_confirmation)
+        # Получаем текущий баланс из API
+            balance_result = await get_gmines_balance()
         
+            if not balance_result['ok']:
+                await msg.reply(f"❌ Ошибка проверки баланса: {balance_result['msg']}\n\nПопробуйте позже или свяжитесь с администратором.")
+                return
+        
+            initial_balance = balance_result['gmp']
+        
+        # Сохраняем данные в состояние
+            await state.update_data(
+                deposit_amount=amount,
+                initial_balance=initial_balance,
+                deposit_username=msg.from_user.username or msg.from_user.full_name
+            )
+            await state.set_state(DepositStates.waiting_confirmation)
+
             kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="✅ Я перевёл", callback_data=f"deposit_confirm_{uid}_{amount}")],
                 [InlineKeyboardButton(text="❌ Отмена", callback_data="deposit_cancel")]
@@ -1925,9 +2149,10 @@ async def handle_text(msg: Message, state: FSMContext):
             await msg.reply(
             f"⚠️ ПРЕЖДЕ ЧЕМ ОТПРАВИТЬ ЗАЯВКУ!\n\n"
             f"Переведите {fmt(amount)} {CURRENCY} в @gminesbot\n"
-            f"на аккаунт: @nikaIsLove (ID: 8894401294)\n\n"
+            f"на аккаунт: @DeathGmp (ID: 8894401294)\n\n"
+            f"📊 Текущий баланс GMP: {fmt(initial_balance)}\n\n"
             f"После перевода нажмите «Я перевёл»",
-            reply_markup=kb
+                reply_markup=kb
             )
         else:
             await state.set_state(DepositStates.waiting_amount)
@@ -1948,14 +2173,30 @@ async def handle_text(msg: Message, state: FSMContext):
             if amount <= 0:
                 await msg.reply(f"❌ Неверная сумма. Пример: вывод 500 @username")
                 return
+        
+            user = core.db.get(uid)
+            if user['balance'] < amount:
+                await msg.reply(f"❌ Не хватает средств. Баланс: {fmt(user['balance'])} {CURRENCY}")
+                return
+        
+            total_deposited = user.get('total_deposited', 0)
+            if total_deposited < MIN_DEPOSIT_TO_WITHDRAW:
+                await msg.reply(
+                f"❌ Для вывода средств необходимо пополнить баланс минимум на {MIN_DEPOSIT_TO_WITHDRAW} {CURRENCY}\n\n"
+                f"📥 Ваш текущий депозит: {fmt(total_deposited)} {CURRENCY}\n"
+                f"💳 Пополните баланс и повторите попытку."
+                )
+                return
+        
             await process_withdraw(msg, amount, address)
         else:
             await state.set_state(WithdrawStates.waiting_amount)
             await msg.reply(
-                f"📤 ВЫВОД СРЕДСТВ\n\n"
-                f"Введите сумму в {CURRENCY}, которую хотите вывести:\n\n"
-                f"Форматы: 100, 5к\n\n"
-                f"Для отмены напишите 'отмена'"
+            f"📤 ВЫВОД СРЕДСТВ\n\n"
+            f"Введите сумму в {CURRENCY}, которую хотите вывести:\n\n"
+            f"⚠️ Для вывода необходим минимальный депозит {MIN_DEPOSIT_TO_WITHDRAW} {CURRENCY}\n"
+            f"Форматы: 100, 5к\n\n"
+            f"Для отмены напишите 'отмена'"
             )
         return
     
@@ -2626,8 +2867,18 @@ async def process_withdraw(msg: Message, amount: int, address: str):
     username = msg.from_user.username or msg.from_user.full_name
     
     user = core.db.get(uid)
+    
     if user['balance'] < amount:
         await msg.reply(f"❌ Не хватает средств. Баланс: {fmt(user['balance'])} {CURRENCY}")
+        return
+    
+    total_deposited = user.get('total_deposited', 0)
+    if total_deposited < MIN_DEPOSIT_TO_WITHDRAW:
+        await msg.reply(
+            f"❌ Для вывода средств необходимо пополнить баланс минимум на {MIN_DEPOSIT_TO_WITHDRAW} {CURRENCY}\n\n"
+            f"📥 Ваш текущий депозит: {fmt(total_deposited)} {CURRENCY}\n"
+            f"💳 Пополните баланс и повторите попытку."
+        )
         return
     
     request = core.withdraws.create(uid, username, amount, address)
@@ -2764,39 +3015,126 @@ async def callback_handler(cb: CallbackQuery, state: FSMContext):
                 await cb.answer("❌ Не твоя заявка", show_alert=True)
                 return
     
+            # Получаем сохранённый начальный баланс
+            data_state = await state.get_data()
+            initial_balance = data_state.get('initial_balance', 0)
             username = cb.from_user.username or cb.from_user.full_name
-    
-            request = core.deposits.create(uid, username, amount)
-    
-            await cb.message.edit_text(
-        f"✅ ЗАЯВКА НА ДЕПОЗИТ СОЗДАНА!\n\n"
-        f"📋 Номер заявки: #{request['id']}\n"
-        f"💰 Сумма: {fmt(amount)} {CURRENCY}\n"
-        f"⏳ Статус: Ожидает подтверждения\n\n"
-        f"⏰ Ожидайте, администратор подтвердит заявку."
-            )
-    
-            for admin_id in ADMIN_IDS:
-                kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="✅ Одобрить", callback_data=f"deposit_approve_{request['id']}"),
-                     InlineKeyboardButton(text="❌ Отклонить", callback_data=f"deposit_reject_{request['id']}")]
-                ])
 
-                try:
-                    await cb.bot.send_message(
-                        admin_id,
-                        f"📥 НОВАЯ ЗАЯВКА НА ДЕПОЗИТ\n\n"
-                        f"👤 Пользователь: {username}\n"
-                        f"🆔 ID: {uid}\n"
-                        f"💰 Сумма: {fmt(amount)} {CURRENCY}\n"
-                        f"📋 Заявка: #{request['id']}",
-                        reply_markup=kb
-                    )
-                except:
-                    pass
+            # Сообщаем о проверке
+            await cb.message.edit_text("⏳ Проверяем баланс GMP...")
 
-            await cb.answer("✅ Заявка создана!", show_alert=True)
+            # Ждём 3 секунды перед повторной проверкой
+            await asyncio.sleep(3)
+
+            # Проверяем баланс снова
+            balance_result = await get_gmines_balance()
+
+            if not balance_result['ok']:
+                await cb.message.edit_text(
+            f"❌ Ошибка проверки баланса: {balance_result['msg']}\n\n"
+            f"Свяжитесь с администратором для ручного подтверждения."
+                )
+                await cb.answer()
+                return
+    
+            new_balance = balance_result['gmp']
+            balance_diff = new_balance - initial_balance
+    
+            # Проверяем, изменился ли баланс на нужную сумму
+            if balance_diff >= amount:
+                # ✅ ДЕПОЗИТ ОДОБРЕН
+                request = core.deposits.create(uid, username, amount)
+                core.deposits.approve(request['id'], uid)
+
+                # Начисляем деньги пользователю
+                user = core.db.get(uid)
+                core.db.update(uid, 
+                              balance=user['balance'] + amount,
+                              total_deposited=user.get('total_deposited', 0) + amount)
+
+                await cb.message.edit_text(
+                    f"✅ ДЕПОЗИТ ОДОБРЕН!\n\n"
+                    f"💰 Сумма: +{fmt(amount)} {CURRENCY}\n"
+                    f"📊 Баланс GMP: {fmt(initial_balance)} → {fmt(new_balance)}\n"
+                    f"💳 Твой баланс: {fmt(user['balance'] + amount)} {CURRENCY}"
+                )
+
+                # Уведомляем админов
+                for admin_id in ADMIN_IDS:
+                    try:
+                        await cb.bot.send_message(
+                            admin_id,
+                            f"✅ ДЕПОЗИТ АВТОМАТИЧЕСКИ ОДОБРЕН\n\n"
+                            f"👤 {username} (ID: {uid})\n"
+                            f"💰 Сумма: {fmt(amount)} {CURRENCY}\n"
+                            f"📊 Баланс GMP: {fmt(initial_balance)} → {fmt(new_balance)}"
+                        )
+                    except:
+                        pass
+
+                await cb.answer("✅ Депозит одобрен!", show_alert=True)
+
+            elif balance_diff > 0 and balance_diff < amount:
+                # ⚠️ ЧАСТИЧНЫЙ ПЕРЕВОД
+                await cb.message.edit_text(
+                    f"⚠️ ВНИМАНИЕ! Переведено меньше суммы!\n\n"
+                    f"💰 Требуется: {fmt(amount)} {CURRENCY}\n"
+                    f"📊 Переведено: {fmt(balance_diff)} {CURRENCY}\n"
+                    f"📊 Баланс GMP: {fmt(initial_balance)} → {fmt(new_balance)}\n\n"
+                    f"Свяжитесь с администратором для ручного подтверждения."
+                )
+
+                # Уведомляем админов
+                for admin_id in ADMIN_IDS:
+                    try:
+                        kb = InlineKeyboardMarkup(inline_keyboard=[
+                            [InlineKeyboardButton(text="✅ Одобрить частично", callback_data=f"deposit_approve_{request_id}"),
+                             InlineKeyboardButton(text="❌ Отклонить", callback_data=f"deposit_reject_{request_id}")]
+                        ])
+                        await cb.bot.send_message(
+                            admin_id,
+                            f"⚠️ ЧАСТИЧНЫЙ ДЕПОЗИТ\n\n"
+                            f"👤 {username} (ID: {uid})\n"
+                            f"💰 Требуется: {fmt(amount)} {CURRENCY}\n"
+                            f"📊 Переведено: {fmt(balance_diff)} {CURRENCY}",
+                            reply_markup=kb
+                        )
+                    except:
+                        pass
+
+                await cb.answer("⚠️ Частичный перевод", show_alert=True)
+
+            else:
+                # ❌ ДЕПОЗИТ ОТКЛОНЁН (баланс не изменился)
+                request = core.deposits.create(uid, username, amount)
+                core.deposits.reject(request['id'], uid)
+
+                await cb.message.edit_text(
+                    f"❌ ДЕПОЗИТ ОТКЛОНЁН\n\n"
+                    f"💰 Сумма: {fmt(amount)} {CURRENCY}\n"
+                    f"📊 Баланс GMP не изменился\n"
+                    f"📊 Был: {fmt(initial_balance)}\n"
+                    f"📊 Стал: {fmt(new_balance)}\n\n"
+                    f"Пожалуйста, проверьте, что вы перевели деньги на правильный аккаунт."
+                )
+
+                # Уведомляем админов
+                for admin_id in ADMIN_IDS:
+                    try:
+                        await cb.bot.send_message(
+                            admin_id,
+                            f"❌ ДЕПОЗИТ АВТОМАТИЧЕСКИ ОТКЛОНЁН\n\n"
+                            f"👤 {username} (ID: {uid})\n"
+                            f"💰 Сумма: {fmt(amount)} {CURRENCY}\n"
+                            f"📊 Баланс GMP не изменился"
+                        )
+                    except:
+                        pass
+
+                await cb.answer("❌ Депозит отклонён", show_alert=True)
+
             await state.clear()
+            await cb.answer()
             return
 
         if data == "deposit_cancel":
