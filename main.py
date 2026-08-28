@@ -11,14 +11,14 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from aiogram.enums import ParseMode
 
-from pyrogram import Client, filters
-from pyrogram.types import Message as PyroMessage
-from pyrogram.enums import ChatType
+from telethon import TelegramClient, events
+from telethon.tl.types import Message as TelethonMessage
+from telethon.errors import SessionPasswordNeededError
 
 # ========== КОНФИГУРАЦИЯ ==========
-BOT_TOKEN = "8998906333:AAGBOPdD2cHUR44cC-BtPzOovidkQ_tCnXE"  # Замените на ваш токен
-API_ID = 36448761  # Ваш API ID
-API_HASH = "d0e9fe69c0b861358283e46d11a40579"  # Ваш API HASH
+BOT_TOKEN = "YOUR_BOT_TOKEN"  # Замените на ваш токен
+API_ID = 123456  # Ваш API ID
+API_HASH = "your_api_hash"  # Ваш API HASH
 ADMIN_ID = 6539341659  # ID администратора
 TARGET_CHAT = "pepegamechat"  # Целевой чат
 
@@ -99,7 +99,7 @@ class SessionDatabase:
             self.data[phone]["status"] = status
             self._save()
 
-# ========== МЕНЕДЖЕР ЮЗЕРБОТОВ ==========
+# ========== МЕНЕДЖЕР ЮЗЕРБОТОВ (TELEGRAM) ==========
 class UserBotManager:
     def __init__(self, api_id: int, api_hash: str, session_db, target_chat: str):
         self.api_id = api_id
@@ -108,7 +108,7 @@ class UserBotManager:
         self.target_chat = target_chat
         self.clients = {}  # phone: client
         self.running_tasks = {}  # phone: task
-        self.pending_auth = {}  # phone: client (для ожидания кода)
+        self.pending_auth = {}  # phone: phone_data
     
     def _get_session_path(self, phone: str) -> str:
         """Получает путь для файла сессии"""
@@ -120,15 +120,16 @@ class UserBotManager:
             session_path = self._get_session_path(phone)
             
             # Создаем клиента
-            client = Client(
+            client = TelegramClient(
                 session_path,
-                api_id=self.api_id,
-                api_hash=self.api_hash
+                self.api_id,
+                self.api_hash
             )
             
             await client.connect()
-            sent_code = await client.send_code(phone)
-            await client.disconnect()
+            
+            # Отправляем запрос на код
+            await client.send_code_request(phone)
             
             # Сохраняем клиента для ввода кода
             self.pending_auth[phone] = {
@@ -158,8 +159,12 @@ class UserBotManager:
             client = pending["client"]
             session_path = pending["session_path"]
             
-            await client.connect()
-            await client.sign_in(phone, code)
+            # Пытаемся войти с кодом
+            try:
+                await client.sign_in(phone, code)
+            except SessionPasswordNeededError:
+                # Если нужен пароль двухфакторной аутентификации
+                return {"status": "error", "message": "Требуется пароль двухфакторной аутентификации. Используйте /password"}
             
             # Сохраняем сессию
             self.session_db.add_session(phone, session_path)
@@ -185,11 +190,13 @@ class UserBotManager:
         client = self.clients[phone]
         
         try:
-            await client.start()
+            # Проверяем, авторизован ли клиент
+            if not await client.is_user_authorized():
+                await client.start()
             
             # Получаем информацию о пользователе
             me = await client.get_me()
-            username = me.username
+            username = me.username if me.username else f"user_{me.id}"
             
             # Обновляем статус
             self.session_db.update_status(phone, "active")
@@ -204,27 +211,36 @@ class UserBotManager:
             logger.error(f"Error starting monitoring: {e}")
             self.session_db.update_status(phone, "error")
     
-    async def _monitor_chat(self, client: Client, username: str, phone: str):
+    async def _monitor_chat(self, client: TelegramClient, username: str, phone: str):
         """Мониторит чат и отвечает на упоминания"""
         try:
             # Получаем чат
-            chat = await client.get_chat(self.target_chat)
+            try:
+                chat = await client.get_entity(self.target_chat)
+            except:
+                # Если не удается получить по username, пробуем по ссылке
+                chat = await client.get_entity(f"https://t.me/{self.target_chat}")
             
             # Отправляем сообщение "б"
-            await client.send_message(chat.id, "б")
+            await client.send_message(chat, "б")
             logger.info(f"Sent 'б' to {self.target_chat}")
             
             # Счетчик сообщений для защиты от спама
             message_count = 0
             last_message_time = datetime.now()
             
-            @client.on_message(filters.chat(chat.id) & filters.text)
-            async def handle_message(client_obj: Client, message: PyroMessage):
+            # Регистрируем обработчик сообщений
+            @client.on(events.NewMessage(chats=chat))
+            async def handle_message(event):
                 nonlocal message_count, last_message_time
                 
                 try:
+                    message = event.message
+                    if not message or not message.text:
+                        return
+                    
                     # Проверяем, упомянут ли пользователь
-                    if message.text and f"@{username}" in message.text.lower():
+                    if f"@{username}" in message.text.lower():
                         # Защита от спама (не более 5 сообщений в минуту)
                         now = datetime.now()
                         if (now - last_message_time).seconds < 60:
@@ -259,7 +275,7 @@ class UserBotManager:
         
         if phone in self.clients:
             try:
-                await self.clients[phone].stop()
+                await self.clients[phone].disconnect()
             except:
                 pass
             del self.clients[phone]
@@ -285,13 +301,18 @@ class UserBotManager:
                         logger.warning(f"Session file not found for {phone}")
                         continue
                     
-                    client = Client(
+                    client = TelegramClient(
                         session_name,
-                        api_id=self.api_id,
-                        api_hash=self.api_hash
+                        self.api_id,
+                        self.api_hash
                     )
                     
-                    await client.start()
+                    await client.connect()
+                    
+                    # Проверяем авторизацию
+                    if not await client.is_user_authorized():
+                        await client.start()
+                    
                     self.clients[phone] = client
                     
                     # Запускаем мониторинг
@@ -575,13 +596,16 @@ async def restart_account(message: Message):
     session_name = db.get_session(phone)
     if session_name:
         try:
-            client = Client(
+            client = TelegramClient(
                 session_name,
-                api_id=API_ID,
-                api_hash=API_HASH
+                API_ID,
+                API_HASH
             )
             
-            await client.start()
+            await client.connect()
+            if not await client.is_user_authorized():
+                await client.start()
+            
             user_manager.clients[phone] = client
             
             # Запускаем мониторинг
@@ -593,6 +617,54 @@ async def restart_account(message: Message):
         except Exception as e:
             logger.error(f"Error restarting account: {e}")
             await message.answer(f"❌ Ошибка: {str(e)}")
+
+@dp.message(Command("password"))
+async def enter_password(message: Message):
+    """Команда для ввода пароля двухфакторной аутентификации"""
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ У вас нет доступа к этому боту.")
+        return
+    
+    args = message.text.split(maxsplit=2)
+    if len(args) < 3:
+        await message.answer(
+            "❌ Используйте: `/password [номер телефона] [пароль]`\n"
+            "Пример: `/password +79999999999 mypassword`",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    phone = args[1]
+    password = args[2]
+    
+    # Проверяем, ожидается ли ввод кода
+    if phone not in user_manager.pending_auth:
+        await message.answer(f"❌ Аккаунт {phone} не ожидает ввода пароля.")
+        return
+    
+    try:
+        pending = user_manager.pending_auth[phone]
+        client = pending["client"]
+        session_path = pending["session_path"]
+        
+        # Вводим пароль
+        await client.sign_in(password=password)
+        
+        # Сохраняем сессию
+        db.add_session(phone, session_path)
+        user_manager.clients[phone] = client
+        
+        # Удаляем из ожидающих
+        del user_manager.pending_auth[phone]
+        
+        # Запускаем мониторинг чата
+        await user_manager.start_monitoring(phone)
+        
+        await message.answer(f"✅ Аккаунт {phone} успешно авторизован с паролем!")
+        
+    except Exception as e:
+        logger.error(f"Error entering password: {e}")
+        await message.answer(f"❌ Ошибка: {str(e)}")
 
 # ========== ЗАПУСК БОТА ==========
 
@@ -627,7 +699,7 @@ async def on_shutdown():
 
 async def main():
     print("=" * 50)
-    print("🤖 Telegram Account Manager Bot")
+    print("🤖 Telegram Account Manager Bot (Telethon)")
     print("=" * 50)
     print(f"📁 Data directory: {DATA_DIR}")
     print(f"📁 Sessions directory: {SESSIONS_DIR}")
