@@ -7,11 +7,12 @@ from typing import Optional, Dict
 from datetime import datetime
 
 from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.middlewares.logging import LoggingMiddleware
-from aiogram.utils import executor
+from aiogram.filters import Command
+from aiogram.types import Message
+from aiogram.enums import ParseMode
 
 from pyrogram import Client, filters
-from pyrogram.types import Message
+from pyrogram.types import Message as PyroMessage
 from pyrogram.enums import ChatType
 
 # ========== КОНФИГУРАЦИЯ ==========
@@ -218,7 +219,7 @@ class UserBotManager:
             last_message_time = datetime.now()
             
             @client.on_message(filters.chat(chat.id) & filters.text)
-            async def handle_message(client_obj: Client, message: Message):
+            async def handle_message(client_obj: Client, message: PyroMessage):
                 nonlocal message_count, last_message_time
                 
                 try:
@@ -310,8 +311,7 @@ user_manager = UserBotManager(API_ID, API_HASH, db, TARGET_CHAT)
 
 # Создаем бота и диспетчер
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
-dp.middleware.setup(LoggingMiddleware())
+dp = Dispatcher()
 
 # ========== ФУНКЦИИ-ПРОВЕРКИ ==========
 def is_admin(user_id: int) -> bool:
@@ -319,8 +319,8 @@ def is_admin(user_id: int) -> bool:
 
 # ========== ОБРАБОТЧИКИ КОМАНД ==========
 
-@dp.message_handler(commands=['start'])
-async def start_command(message: types.Message):
+@dp.message(Command("start"))
+async def start_command(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer("❌ У вас нет доступа к этому боту.")
         return
@@ -334,29 +334,30 @@ async def start_command(message: types.Message):
         "🔹 `/remove [номер]` - удалить аккаунт\n"
         "🔹 `/status` - статус всех аккаунтов\n"
         "🔹 `/stop [номер]` - остановить аккаунт\n"
+        "🔹 `/restart [номер]` - перезапустить аккаунт\n"
         "🔹 `/start` - это меню\n\n"
         "**Примеры:**\n"
         "`/add +79999999999`\n"
         "`/code +79999999999 12345`",
-        parse_mode="Markdown"
+        parse_mode=ParseMode.MARKDOWN
     )
 
-@dp.message_handler(commands=['add'])
-async def add_account(message: types.Message):
+@dp.message(Command("add"))
+async def add_account(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer("❌ У вас нет доступа к этому боту.")
         return
     
-    args = message.get_args()
-    if not args:
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
         await message.answer(
             "❌ Укажите номер телефона.\n"
             "Пример: `/add +79999999999`",
-            parse_mode="Markdown"
+            parse_mode=ParseMode.MARKDOWN
         )
         return
     
-    phone = args.strip()
+    phone = args[1].strip()
     
     # Проверяем формат номера
     if not re.match(r'^\+\d{10,15}$', phone):
@@ -377,7 +378,7 @@ async def add_account(message: types.Message):
                 f"📱 Отправлен код подтверждения на {phone}\n\n"
                 "Введите код командой:\n"
                 f"`/code {phone} [код]`",
-                parse_mode="Markdown"
+                parse_mode=ParseMode.MARKDOWN
             )
         else:
             await message.answer(f"❌ Ошибка: {result['message']}")
@@ -386,22 +387,23 @@ async def add_account(message: types.Message):
         logger.error(f"Error adding account: {e}")
         await message.answer(f"❌ Ошибка: {str(e)}")
 
-@dp.message_handler(commands=['code'])
-async def enter_code(message: types.Message):
+@dp.message(Command("code"))
+async def enter_code(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer("❌ У вас нет доступа к этому боту.")
         return
     
-    args = message.get_args().split()
-    if len(args) != 2:
+    args = message.text.split(maxsplit=2)
+    if len(args) < 3:
         await message.answer(
             "❌ Используйте: `/code [номер телефона] [код]`\n"
             "Пример: `/code +79999999999 12345`",
-            parse_mode="Markdown"
+            parse_mode=ParseMode.MARKDOWN
         )
         return
     
-    phone, code = args
+    phone = args[1]
+    code = args[2]
     
     # Проверяем, ожидается ли ввод кода
     if phone not in user_manager.pending_auth:
@@ -421,8 +423,8 @@ async def enter_code(message: types.Message):
         logger.error(f"Error entering code: {e}")
         await message.answer(f"❌ Ошибка: {str(e)}")
 
-@dp.message_handler(commands=['list'])
-async def list_accounts(message: types.Message):
+@dp.message(Command("list"))
+async def list_accounts(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer("❌ У вас нет доступа к этому боту.")
         return
@@ -451,24 +453,24 @@ async def list_accounts(message: types.Message):
         text += f"   📅 Добавлен: {added_at}\n"
         text += f"   📊 Статус: {status}\n\n"
     
-    await message.answer(text, parse_mode="Markdown")
+    await message.answer(text, parse_mode=ParseMode.MARKDOWN)
 
-@dp.message_handler(commands=['remove'])
-async def remove_account(message: types.Message):
+@dp.message(Command("remove"))
+async def remove_account(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer("❌ У вас нет доступа к этому боту.")
         return
     
-    args = message.get_args()
-    if not args:
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
         await message.answer(
             "❌ Укажите номер телефона.\n"
             "Пример: `/remove +79999999999`",
-            parse_mode="Markdown"
+            parse_mode=ParseMode.MARKDOWN
         )
         return
     
-    phone = args.strip()
+    phone = args[1].strip()
     
     # Проверяем существование
     if not db.get_session(phone):
@@ -483,8 +485,8 @@ async def remove_account(message: types.Message):
     
     await message.answer(f"✅ Аккаунт {phone} удален.")
 
-@dp.message_handler(commands=['status'])
-async def status_command(message: types.Message):
+@dp.message(Command("status"))
+async def status_command(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer("❌ У вас нет доступа к этому боту.")
         return
@@ -517,24 +519,24 @@ async def status_command(message: types.Message):
         "Подробнее: `/list`"
     )
     
-    await message.answer(text, parse_mode="Markdown")
+    await message.answer(text, parse_mode=ParseMode.MARKDOWN)
 
-@dp.message_handler(commands=['stop'])
-async def stop_account(message: types.Message):
+@dp.message(Command("stop"))
+async def stop_account(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer("❌ У вас нет доступа к этому боту.")
         return
     
-    args = message.get_args()
-    if not args:
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
         await message.answer(
             "❌ Укажите номер телефона.\n"
             "Пример: `/stop +79999999999`",
-            parse_mode="Markdown"
+            parse_mode=ParseMode.MARKDOWN
         )
         return
     
-    phone = args.strip()
+    phone = args[1].strip()
     
     if phone not in user_manager.clients:
         await message.answer(f"❌ Аккаунт {phone} не активен.")
@@ -543,22 +545,22 @@ async def stop_account(message: types.Message):
     await user_manager.stop_monitoring(phone)
     await message.answer(f"✅ Аккаунт {phone} остановлен.")
 
-@dp.message_handler(commands=['restart'])
-async def restart_account(message: types.Message):
+@dp.message(Command("restart"))
+async def restart_account(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer("❌ У вас нет доступа к этому боту.")
         return
     
-    args = message.get_args()
-    if not args:
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
         await message.answer(
             "❌ Укажите номер телефона.\n"
             "Пример: `/restart +79999999999`",
-            parse_mode="Markdown"
+            parse_mode=ParseMode.MARKDOWN
         )
         return
     
-    phone = args.strip()
+    phone = args[1].strip()
     
     # Проверяем существование
     if not db.get_session(phone):
@@ -594,7 +596,7 @@ async def restart_account(message: types.Message):
 
 # ========== ЗАПУСК БОТА ==========
 
-async def on_startup(dp):
+async def on_startup():
     logger.info("🚀 Starting bot...")
     logger.info(f"📁 Data directory: {DATA_DIR}")
     logger.info(f"📁 Sessions directory: {SESSIONS_DIR}")
@@ -604,7 +606,7 @@ async def on_startup(dp):
     
     logger.info("✅ Bot started successfully!")
 
-async def on_shutdown(dp):
+async def on_shutdown():
     logger.info("🛑 Shutting down...")
     
     # Останавливаем всех клиентов
@@ -618,9 +620,12 @@ async def on_shutdown(dp):
         except:
             pass
     
+    # Закрываем сессию бота
+    await bot.session.close()
+    
     logger.info("✅ Bot stopped!")
 
-if __name__ == '__main__':
+async def main():
     print("=" * 50)
     print("🤖 Telegram Account Manager Bot")
     print("=" * 50)
@@ -630,9 +635,12 @@ if __name__ == '__main__':
     print(f"🎯 Target chat: @{TARGET_CHAT}")
     print("=" * 50)
     
-    executor.start_polling(
-        dp,
-        skip_updates=True,
-        on_startup=on_startup,
-        on_shutdown=on_shutdown
-    )
+    # Регистрируем хуки для запуска и остановки
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+    
+    # Запускаем бота
+    await dp.start_polling(bot)
+
+if __name__ == '__main__':
+    asyncio.run(main())
