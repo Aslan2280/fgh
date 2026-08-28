@@ -15,9 +15,9 @@ from pyrogram.types import Message
 from pyrogram.enums import ChatType
 
 # ========== КОНФИГУРАЦИЯ ==========
-BOT_TOKEN = "YOUR_BOT_TOKEN"  # Замените на ваш токен
-API_ID = 123456  # Ваш API ID
-API_HASH = "your_api_hash"  # Ваш API HASH
+BOT_TOKEN = "8998906333:AAGBOPdD2cHUR44cC-BtPzOovidkQ_tCnXE"  # Замените на ваш токен
+API_ID = 36448761  # Ваш API ID
+API_HASH = "d0e9fe69c0b861358283e46d11a40579"  # Ваш API HASH
 ADMIN_ID = 6539341659  # ID администратора
 TARGET_CHAT = "pepegamechat"  # Целевой чат
 
