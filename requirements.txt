@@ -1,4 +1,4 @@
-aiogram==2.25.1
+aiogram==3.3.0
 pyrogram==2.0.106
 pytgcalls==5.0.1
 cryptg==2023.1.0
